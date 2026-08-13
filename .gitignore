@@ -1,0 +1,29 @@
+# Build
+.gradle/
+build/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# Local / secrets / device
+local.properties
+*.jks
+*.keystore
+*.key
+google-services.json
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+
+# Logs
+*.log
