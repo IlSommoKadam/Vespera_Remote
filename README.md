@@ -12,6 +12,7 @@ Schema `0.2.x` (versionName) con `versionCode` monotono in `app/build.gradle`.
 | 0.2.1 | 3 | A connessione: scan porte automatico, preferisce 8082/8083 e verifica TCP |
 | 0.2.2 | 4 | Auto-discovery ritardata + attesa DHCP + retry se porte ancora chiuse |
 | 0.2.3 | 5 | Bridge VPN 10.0.0.0/24 per rendere il Vespera raggiungibile da Singularity |
+| 0.3.0 | 6 | Configurazione multi-strumento: scan/selezione/salvataggio Vespera I, II, Pro |
 
 Prossime patch: `0.2.1`, `0.2.2`, … incrementando anche `versionCode`.
 

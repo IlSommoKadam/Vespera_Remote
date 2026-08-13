@@ -19,9 +19,6 @@ public final class VesperaConnectionService extends Service {
     public static final String ACTION_DISCONNECT = "com.vaonis.vesperawifihelper.DISCONNECT";
     public static final String ACTION_STATUS = "com.vaonis.vesperawifihelper.STATUS";
     public static final String EXTRA_STATUS = "status";
-    private static final String SSID = "vespera2-54d802";
-    private static final String BSSID = "2c:cf:67:54:d8:02";
-    private static final int FREQUENCY_MHZ = 2462;
     private static final int NOTIFICATION_ID = 42;
     private static volatile Network activeNetwork;
     private static volatile String lastStatus = "non connesso";
@@ -35,7 +32,8 @@ public final class VesperaConnectionService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         connectivity = getSystemService(ConnectivityManager.class);
-        NotificationChannel channel = new NotificationChannel("vespera_connection", "Vespera Wi-Fi", NotificationManager.IMPORTANCE_LOW);
+        NotificationChannel channel = new NotificationChannel(
+                "vespera_connection", "Vespera Wi-Fi", NotificationManager.IMPORTANCE_LOW);
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
     }
 
@@ -61,7 +59,17 @@ public final class VesperaConnectionService extends Service {
     }
 
     private void connect() {
-        update("richiesta inviata; attendi/accetta il dialogo Android");
+        VesperaDeviceStore device = VesperaDeviceStore.from(this);
+        if (!device.isConfigured()) {
+            update("configura prima il tuo Vespera (scan → seleziona)");
+            stopForeground(STOP_FOREGROUND_REMOVE);
+            stopSelf();
+            return;
+        }
+        final String ssid = device.getSsid();
+        final String bssid = device.getBssid();
+        final int frequencyMhz = device.getFrequencyMhz();
+        update("richiesta inviata per " + device.getModel() + " / " + ssid);
         callback = new ConnectivityManager.NetworkCallback() {
             @Override public void onAvailable(Network network) {
                 activeNetwork = network;
@@ -77,20 +85,23 @@ public final class VesperaConnectionService extends Service {
             }
         };
         try {
-            // Device dumpsys reports this AP as config key "NONE" and TYPE_OPEN.
-            // An OWE-only specifier produces the SystemUI "No devices found" dialog.
-            WifiNetworkSpecifier specifier = new WifiNetworkSpecifier.Builder()
-                    .setSsid(SSID).setBssid(MacAddress.fromString(BSSID))
-                    .setIsEnhancedOpen(false)
-                    .setPreferredChannelsFrequenciesMhz(new int[]{FREQUENCY_MHZ}).build();
+            // Open/NONE APs: OWE-only specifier shows SystemUI "No devices found".
+            WifiNetworkSpecifier.Builder specifierBuilder = new WifiNetworkSpecifier.Builder()
+                    .setSsid(ssid)
+                    .setBssid(MacAddress.fromString(bssid))
+                    .setIsEnhancedOpen(false);
+            if (frequencyMhz > 0) {
+                specifierBuilder.setPreferredChannelsFrequenciesMhz(new int[]{frequencyMhz});
+            }
             NetworkRequest request = new NetworkRequest.Builder()
                     .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                     .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                    .setNetworkSpecifier(specifier).build();
+                    .setNetworkSpecifier(specifierBuilder.build())
+                    .build();
             connectivity.requestNetwork(request, callback, 30_000);
         } catch (RuntimeException failure) {
             callback = null;
-            update("errore: " + failure.getClass().getSimpleName());
+            update("errore: " + failure.getClass().getSimpleName() + " — controlla SSID/BSSID");
             stopSelf();
         }
     }

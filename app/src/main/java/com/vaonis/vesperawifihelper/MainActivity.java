@@ -9,15 +9,11 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.location.LocationManager;
 import android.net.ConnectivityManager;
-import android.net.MacAddress;
 import android.net.Network;
-import android.net.NetworkCapabilities;
-import android.net.NetworkRequest;
 import android.net.LinkProperties;
 import android.net.RouteInfo;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
-import android.net.wifi.WifiNetworkSpecifier;
 import android.net.VpnService;
 import android.os.Bundle;
 import android.os.Handler;
@@ -25,31 +21,30 @@ import android.os.Looper;
 import android.os.Build;
 import android.provider.Settings;
 import android.view.Gravity;
-import android.view.View;
 import android.widget.Button;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Requests the Vespera's local-only OWE Wi-Fi without changing the Ethernet default route. */
+/** Requests a configured Vespera local-only Wi-Fi without changing the Ethernet default route. */
 public final class MainActivity extends Activity {
     private static final int LOCATION_REQUEST_CODE = 100;
     private static final int VPN_REQUEST_CODE = 101;
-    private static final String SSID = "vespera2-54d802";
-    private static final String BSSID = "2c:cf:67:54:d8:02";
-    private static final int FREQUENCY_MHZ = 2462;
     /** Preferred control endpoints for Singularity/API; FTP 21 is detected but not preferred. */
     private static final int[] PREFERRED_PORTS = {8082, 8083};
     private static final int[] SCAN_PORTS = {
@@ -62,12 +57,15 @@ public final class MainActivity extends Activity {
     private ConnectivityManager connectivityManager;
     private WifiManager wifiManager;
     private LocationManager locationManager;
-    private ConnectivityManager.NetworkCallback networkCallback;
-    private Network vesperaNetwork;
+    private VesperaDeviceStore deviceStore;
     private TextView status;
     private TextView vesperaInfo;
     private TextView connectionInfo;
     private TextView bridgeInfo;
+    private TextView configuredDeviceInfo;
+    private LinearLayout foundDevicesList;
+    private EditText ssidInput;
+    private EditText bssidInput;
     private EditText hostInput;
     private EditText portInput;
     private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
@@ -109,32 +107,60 @@ public final class MainActivity extends Activity {
         connectivityManager = getSystemService(ConnectivityManager.class);
         wifiManager = getSystemService(WifiManager.class);
         locationManager = getSystemService(LocationManager.class);
+        deviceStore = VesperaDeviceStore.from(this);
         buildUi();
+        refreshConfiguredDeviceLabel();
     }
 
     private void buildUi() {
+        ScrollView scroll = new ScrollView(this);
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setGravity(Gravity.CENTER);
+        layout.setGravity(Gravity.CENTER_HORIZONTAL);
         int padding = (int) (24 * getResources().getDisplayMetrics().density);
         layout.setPadding(padding, padding, padding, padding);
         TextView versionLabel = new TextView(this);
         versionLabel.setText("Vespera Wi-Fi Helper " + appVersionLabel());
         versionLabel.setGravity(Gravity.CENTER_HORIZONTAL);
         status = new TextView(this);
-        status.setText("Pronto: richiesta locale Open per " + SSID);
+        status.setText("Configura il tuo Vespera (I / II / Pro), poi connetti.");
         connectionInfo = new TextView(this);
         connectionInfo.setText("Stato connessione: non connesso");
         bridgeInfo = new TextView(this);
         bridgeInfo.setText("Bridge Singularity: spento");
+        configuredDeviceInfo = new TextView(this);
         vesperaInfo = new TextView(this);
-        vesperaInfo.setText("Ricerca rete Vespera in corso...");
-        Button refresh = new Button(this);
-        refresh.setText("Aggiorna presenza e segnale");
-        refresh.setOnClickListener(v -> refreshVesperaScan());
+        vesperaInfo.setText("Tocca «Cerca strumenti Vespera» per elencare le reti vicine.");
+        foundDevicesList = new LinearLayout(this);
+        foundDevicesList.setOrientation(LinearLayout.VERTICAL);
+
+        TextView deviceTitle = new TextView(this);
+        deviceTitle.setText("Strumento salvato / da selezionare");
+        ssidInput = new EditText(this);
+        ssidInput.setHint("SSID (es. vespera2-xxxxxx / VESPERAPRO-xxxxx)");
+        ssidInput.setText(deviceStore.getSsid());
+        bssidInput = new EditText(this);
+        bssidInput.setHint("BSSID MAC (es. 2c:cf:67:xx:xx:xx)");
+        bssidInput.setText(deviceStore.getBssid());
+        Button saveManual = new Button(this);
+        saveManual.setText("Salva SSID/BSSID manuali");
+        saveManual.setOnClickListener(v -> saveManualDevice());
+        Button clearDevice = new Button(this);
+        clearDevice.setText("Cancella strumento salvato");
+        clearDevice.setOnClickListener(v -> {
+            deviceStore.clear();
+            ssidInput.setText("");
+            bssidInput.setText("");
+            refreshConfiguredDeviceLabel();
+            show("Strumento cancellato.");
+        });
+
         Button locationSettings = new Button(this);
         locationSettings.setText("Attiva localizzazione");
         locationSettings.setOnClickListener(v -> openLocationSettings());
+        Button refresh = new Button(this);
+        refresh.setText("Cerca strumenti Vespera");
+        refresh.setOnClickListener(v -> refreshVesperaScan());
         Button connect = new Button(this);
         connect.setText("Connetti Vespera");
         connect.setOnClickListener(v -> connect());
@@ -154,28 +180,70 @@ public final class MainActivity extends Activity {
         Button findPort = new Button(this);
         findPort.setText("Cerca porta Vespera");
         findPort.setOnClickListener(v -> findVesperaPort(true));
+
         layout.addView(versionLabel);
         layout.addView(status);
         layout.addView(connectionInfo);
         layout.addView(bridgeInfo);
-        layout.addView(vesperaInfo);
+        layout.addView(deviceTitle);
+        layout.addView(configuredDeviceInfo);
+        layout.addView(ssidInput);
+        layout.addView(bssidInput);
+        layout.addView(saveManual);
+        layout.addView(clearDevice);
         layout.addView(locationSettings);
         layout.addView(refresh);
+        layout.addView(vesperaInfo);
+        layout.addView(foundDevicesList);
         layout.addView(connect);
         layout.addView(hostInput);
         layout.addView(portInput);
         layout.addView(verify);
         layout.addView(findPort);
         layout.addView(disconnect);
-        setContentView(layout);
+        scroll.addView(layout);
+        setContentView(scroll);
     }
 
     private String appVersionLabel() {
         try {
             return "v" + getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
         } catch (PackageManager.NameNotFoundException missing) {
-            return "v0.2.3";
+            return "v0.3.0";
         }
+    }
+
+    private void refreshConfiguredDeviceLabel() {
+        configuredDeviceInfo.setText("Salvato:\n" + deviceStore.describe());
+        if (deviceStore.isConfigured()) {
+            status.setText("Pronto per " + deviceStore.getModel() + " / " + deviceStore.getSsid());
+        }
+    }
+
+    private void saveManualDevice() {
+        String ssid = ssidInput.getText().toString().trim();
+        String bssid = bssidInput.getText().toString().trim();
+        if (!VesperaDeviceStore.isVesperaSsid(ssid)) {
+            show("SSID non sembra un Vespera (attesi: Vespera-*, vespera2-*, VESPERAPRO-*).");
+            return;
+        }
+        if (!bssid.matches("(?i)^([0-9a-f]{2}:){5}[0-9a-f]{2}$")) {
+            show("BSSID non valido. Usa il formato aa:bb:cc:dd:ee:ff");
+            return;
+        }
+        int frequency = deviceStore.getFrequencyMhz();
+        deviceStore.save(ssid, bssid, frequency);
+        refreshConfiguredDeviceLabel();
+        show("Salvato " + deviceStore.getModel() + ": " + ssid);
+    }
+
+    private void selectScannedDevice(ScanResult result) {
+        deviceStore.saveFromScan(result);
+        ssidInput.setText(result.SSID);
+        bssidInput.setText(result.BSSID == null ? "" : result.BSSID.toLowerCase(Locale.US));
+        refreshConfiguredDeviceLabel();
+        show("Selezionato " + VesperaDeviceStore.guessModel(result.SSID)
+                + " (" + result.SSID + "). Ora puoi Connetti Vespera.");
     }
 
     /** Asks once for VPN consent, then routes 10.0.0.0/24 to all apps via Vespera Wi-Fi. */
@@ -209,55 +277,51 @@ public final class MainActivity extends Activity {
         mainHandler.post(() -> bridgeInfo.setText("Bridge Singularity: " + message));
     }
 
-    /** Shows only the exact SSID+BSSID requested by this app, never a similarly named AP. */
+    /** Lists nearby Vespera I / II / Pro APs for the user to pick. */
     private void refreshVesperaScan() {
         if (!hasWifiPermissions()) {
             vesperaInfo.setText("Concedi Posizione precisa e Dispositivi Wi-Fi nelle vicinanze per cercare Vespera.");
             return;
         }
-        // startScan is best-effort. The BroadcastReceiver below waits for the actual result,
-        // rather than assuming a scan has finished after an arbitrary delay.
         vesperaInfo.setText("Scansione Wi-Fi in corso…");
+        foundDevicesList.removeAllViews();
         boolean accepted = wifiManager.startScan();
         if (!accepted) {
-            vesperaInfo.setText("Android ha limitato/rifiutato la nuova scansione. Mostro l'ultimo risultato disponibile. "
+            vesperaInfo.setText("Android ha limitato/rifiutato la nuova scansione. Mostro l'ultimo risultato. "
                     + scanPrerequisites());
             showVesperaScanResult(false);
         }
     }
 
     private void showVesperaScanResult(boolean freshResults) {
-        ScanResult vespera = null;
-        ScanResult sameSsidDifferentBssid = null;
+        List<ScanResult> found = new ArrayList<>();
         for (ScanResult result : wifiManager.getScanResults()) {
-            if (SSID.equals(result.SSID) && BSSID.equalsIgnoreCase(result.BSSID)) {
-                vespera = result;
-                break;
-            }
-            if (SSID.equals(result.SSID)) sameSsidDifferentBssid = result;
+            if (VesperaDeviceStore.isVesperaSsid(result.SSID)) found.add(result);
         }
-        if (vespera == null) {
-            if (sameSsidDifferentBssid != null) {
-                vesperaInfo.setText("Vespera trovato, ma BSSID diverso da quello configurato."
-                        + "\nSSID: " + sameSsidDifferentBssid.SSID
-                        + "\nBSSID rilevato: " + sameSsidDifferentBssid.BSSID
-                        + "\nBSSID richiesto: " + BSSID
-                        + "\nSegnale: " + sameSsidDifferentBssid.level + " dBm"
-                        + "\nNon avvio la connessione: la richiesta resta correttamente vincolata al BSSID esatto.");
-                return;
-            }
+        Collections.sort(found, Comparator.comparingInt((ScanResult r) -> r.level).reversed());
+        foundDevicesList.removeAllViews();
+        if (found.isEmpty()) {
             vesperaInfo.setText((freshResults ? "Scansione aggiornata. " : "Risultati memorizzati. ")
-                    + "Vespera non presente: " + SSID + " (" + BSSID + "). " + scanPrerequisites());
+                    + "Nessun Vespera (I/II/Pro) nelle vicinanze. " + scanPrerequisites()
+                    + "\nPuoi comunque inserire SSID/BSSID a mano.");
             return;
         }
-        int bars = WifiManager.calculateSignalLevel(vespera.level, 5) + 1;
-        String security = vespera.capabilities.contains("OWE") ? "OWE / Enhanced Open" : vespera.capabilities;
-        vesperaInfo.setText((freshResults ? "Scansione aggiornata" : "Ultimo risultato disponibile")
-                + "\nVespera trovata\nSSID: " + vespera.SSID
-                + "\nBSSID: " + vespera.BSSID
-                + "\nSegnale: " + vespera.level + " dBm (" + bars + "/5)"
-                + "\nCanale: " + vespera.frequency + " MHz"
-                + "\nSicurezza: " + security);
+        vesperaInfo.setText((freshResults ? "Scansione aggiornata. " : "Ultimo risultato. ")
+                + found.size() + " strumento/i trovato/i — tocca per salvare:");
+        for (ScanResult result : found) {
+            int bars = WifiManager.calculateSignalLevel(result.level, 5) + 1;
+            String model = VesperaDeviceStore.guessModel(result.SSID);
+            boolean selected = deviceStore.isConfigured()
+                    && deviceStore.getSsid().equals(result.SSID)
+                    && deviceStore.getBssid().equalsIgnoreCase(result.BSSID);
+            Button pick = new Button(this);
+            pick.setAllCaps(false);
+            pick.setText((selected ? "✓ " : "") + model + "\n" + result.SSID
+                    + "\n" + result.BSSID + " · " + result.level + " dBm (" + bars + "/5) · "
+                    + result.frequency + " MHz");
+            pick.setOnClickListener(v -> selectScannedDevice(result));
+            foundDevicesList.addView(pick);
+        }
     }
 
     private boolean hasWifiPermissions() {
@@ -282,57 +346,6 @@ public final class MainActivity extends Activity {
                 + ", permessi=" + (hasWifiPermissions() ? "OK" : "MANCANTI") + ".";
     }
 
-    private void legacyConnect() {
-        if (!hasWifiPermissions()) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
-                        Manifest.permission.NEARBY_WIFI_DEVICES}, LOCATION_REQUEST_CODE);
-            } else {
-                requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, LOCATION_REQUEST_CODE);
-            }
-            return;
-        }
-        refreshVesperaScan();
-        disconnect();
-        setConnectionState("richiesta inviata; attendi/accetta il dialogo Android");
-        try {
-        WifiNetworkSpecifier specifier = new WifiNetworkSpecifier.Builder()
-                .setSsid(SSID)
-                .setBssid(MacAddress.fromString(BSSID))
-                .setIsEnhancedOpen(false)
-                .setPreferredChannelsFrequenciesMhz(new int[]{FREQUENCY_MHZ})
-                .build();
-        NetworkRequest request = new NetworkRequest.Builder()
-                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .setNetworkSpecifier(specifier)
-                .build();
-        status.setText("Richiesta di connessione locale inviata…");
-        networkCallback = new ConnectivityManager.NetworkCallback() {
-            @Override public void onAvailable(Network network) {
-                vesperaNetwork = network;
-                setConnectionState("CONNESSO al Vespera (rete locale, senza Internet)");
-                show("Connesso a Vespera. Ethernet rimane rete predefinita.");
-            }
-            @Override public void onLost(Network network) {
-                if (network.equals(vesperaNetwork)) vesperaNetwork = null;
-                setConnectionState("connessione persa");
-                show("Connessione Vespera persa.");
-            }
-            @Override public void onUnavailable() {
-                vesperaNetwork = null;
-                setConnectionState("non disponibile / richiesta rifiutata / timeout");
-                show("Vespera non disponibile o connessione rifiutata.");
-            }
-        };
-        connectivityManager.requestNetwork(request, networkCallback, 30_000);
-        } catch (RuntimeException failure) {
-            networkCallback = null;
-            setConnectionState("errore: " + failure.getClass().getSimpleName());
-            show("Richiesta Wi-Fi non inviata: " + failure.getMessage());
-        }
-    }
-
     /** The foreground service keeps the request alive if Android hides/recreates this Activity. */
     private void connect() {
         if (!hasWifiPermissions()) {
@@ -344,9 +357,22 @@ public final class MainActivity extends Activity {
             }
             return;
         }
+        if (!deviceStore.isConfigured()) {
+            // Prefer form fields if the user typed them but forgot to save.
+            String ssid = ssidInput.getText().toString().trim();
+            String bssid = bssidInput.getText().toString().trim();
+            if (VesperaDeviceStore.isVesperaSsid(ssid)
+                    && bssid.matches("(?i)^([0-9a-f]{2}:){5}[0-9a-f]{2}$")) {
+                deviceStore.save(ssid, bssid, deviceStore.getFrequencyMhz());
+                refreshConfiguredDeviceLabel();
+            } else {
+                show("Seleziona o salva prima il tuo Vespera (I / II / Pro).");
+                return;
+            }
+        }
         refreshVesperaScan();
         setConnectionState("richiesta inviata; attendi/accetta il dialogo Android");
-        status.setText("Richiesta locale avviata dal servizio Vespera.");
+        status.setText("Connessione a " + deviceStore.getModel() + " / " + deviceStore.getSsid() + "…");
         Intent service = new Intent(this, VesperaConnectionService.class)
                 .setAction(VesperaConnectionService.ACTION_CONNECT);
         startForegroundService(service);
