@@ -1,3 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Vespera Wi-Fi Helper</string>
+    <string name="language_label">Lingua</string>
+    <string-array name="language_entries">
+        <item>Italiano</item>
+        <item>English</item>
+        <item>Español</item>
+    </string-array>
+
+    <string name="status_configure">Configura il tuo Vespera (I / II / Pro), poi connetti.</string>
+    <string name="connection_state">Stato connessione: %1$s</string>
+    <string name="device_saved_state">Strumento salvato: %1$s</string>
+    <string name="device_empty_state">Strumento da selezionare: —</string>
+    <string name="not_saved_label">Nessuno strumento salvato — scegline uno dalla scansione o inserisci SSID/BSSID.</string>
+    <string name="device_detail">%1$s\nSSID: %2$s\nBSSID: %3$s\nCanale: %4$s</string>
+    <string name="device_detail_body">SSID: %1$s\nBSSID: %2$s\nCanale: %3$s</string>
+    <string name="hint_ssid">SSID (es. vespera2-xxxxxx / VESPERAPRO-xxxxx)</string>
+    <string name="hint_bssid">BSSID MAC (es. 2c:cf:67:xx:xx:xx)</string>
+    <string name="btn_save_manual">Salva SSID/BSSID manuali</string>
+    <string name="btn_clear_device">Cancella strumento salvato</string>
+    <string name="btn_location">Attiva localizzazione</string>
+    <string name="btn_scan">Cerca strumenti Vespera</string>
+    <string name="btn_connect">Connetti Vespera</string>
+    <string name="btn_connecting">Connessione…</string>
+    <string name="btn_disconnect">Disconnetti</string>
+    <string name="scan_hint">Tocca «Cerca strumenti Vespera» per elencare le reti vicine.</string>
+    <string name="ready_for">Pronto per %1$s / %2$s</string>
+    <string name="device_cleared">Strumento cancellato.</string>
+    <string name="ssid_invalid">SSID non sembra un Vespera (attesi: Vespera-*, vespera2-*, VESPERAPRO-*).</string>
+    <string name="bssid_invalid">BSSID non valido. Usa il formato aa:bb:cc:dd:ee:ff</string>
+    <string name="device_saved">Salvato %1$s: %2$s</string>
+    <string name="device_selected">Selezionato %1$s (%2$s). Ora puoi Connetti Vespera.</string>
+    <string name="no_device_saved">Nessuno strumento salvato. Scansiona e seleziona il tuo Vespera (I / II / Pro).</string>
+    <string name="channel_auto">canale auto</string>
+    <string name="channel_mhz">%1$d MHz</string>
+
+    <string name="perm_requesting">Serve Posizione precisa e Dispositivi Wi-Fi nelle vicinanze. Richiedo i permessi…</string>
+    <string name="location_off">Localizzazione di sistema DISATTIVA: attiva Posizione, poi riprova Cerca. %1$s</string>
+    <string name="scanning">Scansione Wi-Fi in corso…</string>
+    <string name="scan_bar_searching">Ricerca…\nScansione Wi-Fi in corso</string>
+    <string name="scan_bar_connecting">Connessione…\nRichiesta rete %1$s / %2$s</string>
+    <string name="scan_bar_idle">Tocca «Cerca strumenti Vespera»\nper aggiornare lo stato</string>
+    <string name="scan_throttled">Android ha limitato/rifiutato la nuova scansione. Mostro l\'ultimo risultato. %1$s</string>
+    <string name="scan_none_fresh">Scansione aggiornata. Nessun Vespera (I/II/Pro) nelle vicinanze. %1$s</string>
+    <string name="scan_none_cached">Risultati memorizzati. Nessun Vespera (I/II/Pro) nelle vicinanze. %1$s</string>
+    <string name="scan_found_fresh">Scansione aggiornata. %1$d strumento/i trovato/i — tocca per salvare:</string>
+    <string name="scan_found_cached">Ultimo risultato. %1$d strumento/i trovato/i — tocca per salvare:</string>
+    <string name="legend_offline">○ offline</string>
+    <string name="legend_detected">● rilevato</string>
+    <string name="legend_connected">✓ connesso</string>
+    <string name="device_offline_row">○ %1$s\n%2$s\n%3$s · non online (non in scansione)</string>
+    <string name="prereq_wifi_on">attivo</string>
+    <string name="prereq_wifi_off">disattivo</string>
+    <string name="prereq_loc_on">attiva</string>
+    <string name="prereq_loc_off">DISATTIVA</string>
+    <string name="prereq_perm_ok">OK</string>
+    <string name="prereq_perm_missing">MANCANTI</string>
+    <string name="prereq_summary">Wi-Fi=%1$s, Localizzazione=%2$s, permessi=%3$s.</string>
+    <string name="location_settings_fail">Impossibile aprire le impostazioni Posizione su questa ROM.</string>
+    <string name="select_device_first">Seleziona o salva prima il tuo Vespera (I / II / Pro).</string>
+    <string name="connecting_to">Connessione a %1$s / %2$s…</string>
+    <string name="stale_lost">Connessione persa%1$s. IP/porta precedenti non sono più valide finché non riconnetti.</string>
+    <string name="stale_disconnected">Non connesso%1$s. IP/porta precedenti non sono più valide finché non riconnetti.</string>
+    <string name="perm_denied_status">Serve Posizione precisa (e Wi-Fi nelle vicinanze) per cercare/connettere il Vespera.</string>
+    <string name="perm_denied_scan">Permessi rifiutati. Concedili nelle Impostazioni app, poi Cerca strumenti.</string>
+
+    <string name="conn_disconnected">non connesso</string>
+    <string name="conn_connected">CONNESSO al Vespera (rete locale, senza Internet)</string>
+    <string name="conn_lost">connessione persa</string>
+    <string name="conn_unavailable">non disponibile / richiesta rifiutata / timeout</string>
+    <string name="conn_need_config">configura prima il tuo Vespera (scan → seleziona)</string>
+    <string name="conn_requesting">richiesta inviata per %1$s / %2$s</string>
+    <string name="conn_error">errore: %1$s — controlla SSID/BSSID</string>
+    <string name="conn_notification_title">Vespera Wi-Fi Helper</string>
+    <string name="conn_notification_connecting">Connessione Vespera richiesta</string>
+
 </resources>

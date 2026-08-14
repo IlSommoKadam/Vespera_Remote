@@ -38,8 +38,8 @@ public final class VesperaDeviceStore {
 
     public void save(String ssid, String bssid, int frequencyMhz) {
         prefs.edit()
-                .putString(KEY_SSID, ssid == null ? "" : ssid.trim())
-                .putString(KEY_BSSID, bssid == null ? "" : bssid.trim().toLowerCase(Locale.US))
+                .putString(KEY_SSID, ssid == null ? "" : stripQuotes(ssid.trim()))
+                .putString(KEY_BSSID, normalizeBssid(bssid))
                 .putInt(KEY_FREQUENCY, frequencyMhz)
                 .putString(KEY_MODEL, guessModel(ssid))
                 .apply();
@@ -53,20 +53,28 @@ public final class VesperaDeviceStore {
         prefs.edit().clear().apply();
     }
 
-    public String describe() {
+    /** True if this scan hit is the currently saved instrument. */
+    public boolean matchesScan(ScanResult result) {
+        if (!isConfigured() || result == null) return false;
+        return normalize(getSsid()).equals(normalize(result.SSID))
+                && normalizeBssid(getBssid()).equals(normalizeBssid(result.BSSID));
+    }
+
+    public String describe(Context context) {
         if (!isConfigured()) {
-            return "Nessuno strumento salvato. Scansiona e seleziona il tuo Vespera (I / II / Pro).";
+            return context.getString(R.string.no_device_saved);
         }
         String model = getModel().isEmpty() ? "Vespera" : getModel();
-        String freq = getFrequencyMhz() > 0 ? (getFrequencyMhz() + " MHz") : "canale auto";
-        return model + "\nSSID: " + getSsid() + "\nBSSID: " + getBssid() + "\nCanale: " + freq;
+        String freq = getFrequencyMhz() > 0
+                ? context.getString(R.string.channel_mhz, getFrequencyMhz())
+                : context.getString(R.string.channel_auto);
+        return context.getString(R.string.device_detail, model, getSsid(), getBssid(), freq);
     }
 
     /** Accepts official SSID forms: Vespera-*, Vespera 2-*, vespera2-*, VESPERAPRO-*. */
     public static boolean isVesperaSsid(String ssid) {
-        if (ssid == null || ssid.trim().isEmpty()) return false;
-        String normalized = normalize(ssid);
-        return normalized.contains("vespera");
+        if (ssid == null || stripQuotes(ssid.trim()).isEmpty()) return false;
+        return normalize(ssid).contains("vespera");
     }
 
     public static String guessModel(String ssid) {
@@ -78,10 +86,23 @@ public final class VesperaDeviceStore {
     }
 
     private static String normalize(String ssid) {
-        return ssid.toLowerCase(Locale.US)
+        return stripQuotes(ssid == null ? "" : ssid)
+                .toLowerCase(Locale.US)
                 .replace(" ", "")
                 .replace("_", "")
                 .replace("–", "-")
                 .replace("—", "-");
+    }
+
+    private static String normalizeBssid(String bssid) {
+        return bssid == null ? "" : bssid.trim().toLowerCase(Locale.US);
+    }
+
+    private static String stripQuotes(String value) {
+        String trimmed = value.trim();
+        if (trimmed.length() >= 2 && trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+            return trimmed.substring(1, trimmed.length() - 1).trim();
+        }
+        return trimmed;
     }
 }

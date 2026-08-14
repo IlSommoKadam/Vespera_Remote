@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Vespera Wi-Fi Helper</string>
+    <string name="language_label">Language</string>
+    <string-array name="language_entries">
+        <item>Italiano</item>
+        <item>English</item>
+        <item>Español</item>
+    </string-array>
+
+    <string name="status_configure">Configure your Vespera (I / II / Pro), then connect.</string>
+    <string name="connection_state">Connection status: %1$s</string>
+    <string name="device_saved_state">Saved instrument: %1$s</string>
+    <string name="device_empty_state">Instrument to select: —</string>
+    <string name="hint_ssid">SSID (e.g. vespera2-xxxxxx / VESPERAPRO-xxxxx)</string>
+    <string name="hint_bssid">BSSID MAC (e.g. 2c:cf:67:xx:xx:xx)</string>
+    <string name="btn_save_manual">Save manual SSID/BSSID</string>
+    <string name="btn_clear_device">Clear saved instrument</string>
+    <string name="btn_location">Enable location</string>
+    <string name="btn_scan">Search Vespera instruments</string>
+    <string name="btn_connect">Connect Vespera</string>
+    <string name="btn_connecting">Connecting…</string>
+    <string name="btn_disconnect">Disconnect</string>
+    <string name="scan_hint">Tap «Search Vespera instruments» to list nearby networks.</string>
+    <string name="not_saved_label">No saved instrument — pick one from the scan or enter SSID/BSSID.</string>
+    <string name="ready_for">Ready for %1$s / %2$s</string>
+    <string name="device_cleared">Instrument cleared.</string>
+    <string name="ssid_invalid">SSID does not look like a Vespera (expected: Vespera-*, vespera2-*, VESPERAPRO-*).</string>
+    <string name="bssid_invalid">Invalid BSSID. Use format aa:bb:cc:dd:ee:ff</string>
+    <string name="device_saved">Saved %1$s: %2$s</string>
+    <string name="device_selected">Selected %1$s (%2$s). You can Connect Vespera now.</string>
+    <string name="no_device_saved">No instrument saved. Scan and select your Vespera (I / II / Pro).</string>
+    <string name="device_detail">%1$s\nSSID: %2$s\nBSSID: %3$s\nChannel: %4$s</string>
+    <string name="device_detail_body">SSID: %1$s\nBSSID: %2$s\nChannel: %3$s</string>
+    <string name="channel_auto">auto channel</string>
+    <string name="channel_mhz">%1$d MHz</string>
+
+    <string name="perm_requesting">Precise Location and Nearby Wi-Fi devices are required. Requesting permissions…</string>
+    <string name="location_off">System location is OFF: enable Location, then search again. %1$s</string>
+    <string name="scanning">Wi-Fi scan in progress…</string>
+    <string name="scan_bar_searching">Searching…\nWi-Fi scan in progress</string>
+    <string name="scan_bar_connecting">Connecting…\nRequesting %1$s / %2$s network</string>
+    <string name="scan_bar_idle">Tap «Search Vespera instruments»\nto refresh status</string>
+    <string name="scan_throttled">Android limited/rejected a new scan. Showing the last result. %1$s</string>
+    <string name="scan_none_fresh">Scan updated. No Vespera (I/II/Pro) nearby. %1$s</string>
+    <string name="scan_none_cached">Cached results. No Vespera (I/II/Pro) nearby. %1$s</string>
+    <string name="scan_found_fresh">Scan updated. %1$d instrument(s) found — tap to save:</string>
+    <string name="scan_found_cached">Last result. %1$d instrument(s) found — tap to save:</string>
+    <string name="legend_offline">○ offline</string>
+    <string name="legend_detected">● detected</string>
+    <string name="legend_connected">✓ connected</string>
+    <string name="device_offline_row">○ %1$s\n%2$s\n%3$s · offline (not in scan)</string>
+    <string name="prereq_wifi_on">on</string>
+    <string name="prereq_wifi_off">off</string>
+    <string name="prereq_loc_on">on</string>
+    <string name="prereq_loc_off">OFF</string>
+    <string name="prereq_perm_ok">OK</string>
+    <string name="prereq_perm_missing">MISSING</string>
+    <string name="prereq_summary">Wi-Fi=%1$s, Location=%2$s, permissions=%3$s.</string>
+    <string name="location_settings_fail">Cannot open Location settings on this ROM.</string>
+    <string name="select_device_first">Select or save your Vespera (I / II / Pro) first.</string>
+    <string name="connecting_to">Connecting to %1$s / %2$s…</string>
+    <string name="stale_lost">Connection lost%1$s. Previous IP/port are no longer valid until you reconnect.</string>
+    <string name="stale_disconnected">Not connected%1$s. Previous IP/port are no longer valid until you reconnect.</string>
+    <string name="perm_denied_status">Precise Location (and Nearby Wi-Fi) is required to search/connect the Vespera.</string>
+    <string name="perm_denied_scan">Permissions denied. Allow them in App settings, then Search instruments.</string>
+
+    <string name="conn_disconnected">not connected</string>
+    <string name="conn_connected">CONNECTED to Vespera (local network, no Internet)</string>
+    <string name="conn_lost">connection lost</string>
+    <string name="conn_unavailable">unavailable / request rejected / timeout</string>
+    <string name="conn_need_config">configure your Vespera first (scan → select)</string>
+    <string name="conn_requesting">request sent for %1$s / %2$s</string>
+    <string name="conn_error">error: %1$s — check SSID/BSSID</string>
+    <string name="conn_notification_title">Vespera Wi-Fi Helper</string>
+    <string name="conn_notification_connecting">Vespera connection requested</string>
+
+</resources>

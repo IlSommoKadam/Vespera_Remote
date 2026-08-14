@@ -1,10 +1,10 @@
 # Vespera Wi-Fi Helper
 
-L'app richiede la rete locale del telescopio usando `WifiNetworkSpecifier` e non imposta mai la rete come processo-predefinita; Ethernet resta quindi disponibile per Internet e RustDesk. Il dump del dispositivo ha rilevato questa specifica rete come `TYPE_OPEN`/`NONE`, perciò la richiesta usa Open invece di OWE: un vincolo OWE mostrava il dialogo Android “No devices found”. La `Network` ricevuta in `onAvailable` va usata per il traffico Vespera, ad esempio `network.bindSocket(socket)` o `network.openConnection(url)`.
+L'app mantiene una richiesta Wi-Fi generica e chiede al daemon root `tools/vespera-netd.sh` di associare la rete Vespera come connessione system-wide. Il daemon instrada `10.0.0.0/24` su `wlan0`; Ethernet resta attiva per Internet, ADB e RustDesk. Non viene usata alcuna VPN.
 
 ## Versioning
 
-Schema `0.2.x` (versionName) con `versionCode` monotono in `app/build.gradle`.
+`versionName` segue le revisioni dell'app; `versionCode` resta monotono in `app/build.gradle`.
 
 | Versione | versionCode | Note |
 |----------|-------------|------|
@@ -13,9 +13,9 @@ Schema `0.2.x` (versionName) con `versionCode` monotono in `app/build.gradle`.
 | 0.2.2 | 4 | Auto-discovery ritardata + attesa DHCP + retry se porte ancora chiuse |
 | 0.2.3 | 5 | Bridge VPN 10.0.0.0/24 per rendere il Vespera raggiungibile da Singularity |
 | 0.3.0 | 6 | Configurazione multi-strumento: scan/selezione/salvataggio Vespera I, II, Pro |
+| 0.3.1 | 7 | Pulisce status «raggiungibile» se connessione persa; default SSID/BSSID proprietario |
+| 0.3.8 | 14 | Marcatori ● salvato / ✓ connesso |
+| 0.4.0 | 15 | Selettore lingua IT/EN/ES in alto a destra; testi UI localizzati |
+| 0.5 | 41 | Connessione Vespera system-wide e route diretta; rimossi VPN e fallback locali non funzionanti |
 
-Prossime patch: `0.2.1`, `0.2.2`, … incrementando anche `versionCode`.
-
-## Struttura prevista per versione successiva
-
-Una futura `BootCompletedReceiver` potrà avviare un foreground service che ricrea la stessa richiesta, dopo aver verificato la policy Android al boot. Un bridge (es. VpnService su `10.0.0.0/24`) potrebbe rendere raggiungibile il Vespera anche a Singularity (`com.vaonis.barnard`), oggi esclusa dalla rete `WifiNetworkSpecifier` (AllowedUids solo helper).
+Il daemon deve essere avviato come root sul Pi dopo il boot; l'app comunica con esso tramite `net.req` nella propria directory esterna.
