@@ -21,6 +21,13 @@
     <string name="btn_connect">Conectar Vespera</string>
     <string name="btn_connecting">Conectando…</string>
     <string name="btn_disconnect">Desconectar</string>
+    <string name="hint_host">IP del Vespera (ej. 10.0.0.1)</string>
+    <string name="hint_port">Puerto TCP (ej. 8083)</string>
+    <string name="btn_verify">Verificar Wi-Fi / Vespera</string>
+    <string name="action_result_idle">Resultado verificación: —</string>
+    <string name="action_result">Resultado: %1$s</string>
+    <string name="api_port_detected">Puerto API Vespera detectado: %1$d</string>
+    <string name="api_port_not_found">No se detectó la API Vespera en 8083/8082.</string>
     <string name="scan_hint">Toca «Buscar instrumentos Vespera» para listar redes cercanas.</string>
     <string name="not_saved_label">Ningún instrumento guardado — elige uno del escaneo o introduce SSID/BSSID.</string>
     <string name="ready_for">Listo para %1$s / %2$s</string>
@@ -60,6 +67,12 @@
     <string name="location_settings_fail">No se pueden abrir los ajustes de Ubicación en esta ROM.</string>
     <string name="select_device_first">Selecciona o guarda primero tu Vespera (I / II / Pro).</string>
     <string name="connecting_to">Conectando a %1$s / %2$s…</string>
+    <string name="connected_to">Conectado a %1$s / %2$s.</string>
+    <string name="no_vespera_network">No hay red Vespera disponible: conecta primero.</string>
+    <string name="invalid_port">Puerto TCP no válido.</string>
+    <string name="verifying">Comprobando %1$s:%2$d en la Wi-Fi Vespera…</string>
+    <string name="reachable">Vespera alcanzable en %1$s:%2$d.</string>
+    <string name="not_reachable">%1$s:%2$d no responde por la red Vespera: %3$s</string>
     <string name="stale_lost">Conexión perdida%1$s. La IP/puerto anteriores ya no valen hasta que reconectes.</string>
     <string name="stale_disconnected">No conectado%1$s. La IP/puerto anteriores ya no valen hasta que reconectes.</string>
     <string name="perm_denied_status">Se necesita Ubicación precisa (y Wi-Fi cercanos) para buscar/conectar el Vespera.</string>

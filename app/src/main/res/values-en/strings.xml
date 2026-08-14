@@ -21,6 +21,13 @@
     <string name="btn_connect">Connect Vespera</string>
     <string name="btn_connecting">Connecting…</string>
     <string name="btn_disconnect">Disconnect</string>
+    <string name="hint_host">Vespera IP (e.g. 10.0.0.1)</string>
+    <string name="hint_port">TCP port (e.g. 8083)</string>
+    <string name="btn_verify">Verify Wi-Fi / Vespera</string>
+    <string name="action_result_idle">Verify result: —</string>
+    <string name="action_result">Result: %1$s</string>
+    <string name="api_port_detected">Vespera API port detected: %1$d</string>
+    <string name="api_port_not_found">No Vespera API detected on 8083/8082.</string>
     <string name="scan_hint">Tap «Search Vespera instruments» to list nearby networks.</string>
     <string name="not_saved_label">No saved instrument — pick one from the scan or enter SSID/BSSID.</string>
     <string name="ready_for">Ready for %1$s / %2$s</string>
@@ -60,6 +67,12 @@
     <string name="location_settings_fail">Cannot open Location settings on this ROM.</string>
     <string name="select_device_first">Select or save your Vespera (I / II / Pro) first.</string>
     <string name="connecting_to">Connecting to %1$s / %2$s…</string>
+    <string name="connected_to">Connected to %1$s / %2$s.</string>
+    <string name="no_vespera_network">No Vespera network available: connect first.</string>
+    <string name="invalid_port">Invalid TCP port.</string>
+    <string name="verifying">Checking %1$s:%2$d on Vespera Wi-Fi…</string>
+    <string name="reachable">Vespera reachable at %1$s:%2$d.</string>
+    <string name="not_reachable">%1$s:%2$d does not respond on the Vespera network: %3$s</string>
     <string name="stale_lost">Connection lost%1$s. Previous IP/port are no longer valid until you reconnect.</string>
     <string name="stale_disconnected">Not connected%1$s. Previous IP/port are no longer valid until you reconnect.</string>
     <string name="perm_denied_status">Precise Location (and Nearby Wi-Fi) is required to search/connect the Vespera.</string>

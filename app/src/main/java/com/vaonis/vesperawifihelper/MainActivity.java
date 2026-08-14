@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.location.LocationManager;
+import android.net.Network;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
 import android.os.Build;
@@ -27,16 +28,22 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Selects a Vespera and requests its system-wide Wi-Fi connection. */
 public final class MainActivity extends Activity {
     private static final int LOCATION_REQUEST_CODE = 100;
     private static final int SCAN_PERMISSION_REQUEST_CODE = 102;
+    private static final int[] VESPERA_API_PORTS = {8083, 8082};
     private WifiManager wifiManager;
     private LocationManager locationManager;
     private VesperaDeviceStore deviceStore;
@@ -52,23 +59,31 @@ public final class MainActivity extends Activity {
     private LinearLayout foundDevicesList;
     private EditText ssidInput;
     private EditText bssidInput;
+    private EditText hostInput;
+    private EditText portInput;
     private Button saveManual;
     private Button clearDevice;
     private Button locationSettings;
     private Button refresh;
     private Button connect;
     private Button disconnect;
+    private Button verify;
+    private TextView actionResult;
     private Spinner languageSpinner;
     private boolean languageSpinnerReady;
     /** True when the saved instrument is currently seen in Wi-Fi scan. */
     private boolean savedDeviceOnline;
     /** True from Connect tap until the service reports a terminal status. */
     private boolean connectRequested;
+    /** One-shot startup connection after the saved instrument appears in scan results. */
+    private boolean autoConnectPending = true;
+    private boolean portDiscoveryRunning;
     private static final int COLOR_OFFLINE = 0xFF9E9E9E;
     private static final int COLOR_DETECTED = 0xFFF9A825;
     private static final int COLOR_CONNECTING = 0xFF1565C0;
     private static final int COLOR_CONNECTED = 0xFF2E7D32;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
     private boolean scanReceiverRegistered;
     private final BroadcastReceiver scanResultsReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -84,6 +99,9 @@ public final class MainActivity extends Activity {
                 setConnectionState(connectionStatus);
                 if (VesperaConnectionService.STATUS_CONNECTED.equals(connectionStatus)) {
                     VesperaConnectionService.requestDaemonRoute(MainActivity.this);
+                    show(getString(R.string.connected_to,
+                            deviceStore.getModel(), deviceStore.getSsid()));
+                    discoverApiPort();
                 } else if (VesperaConnectionService.STATUS_DISCONNECTED.equals(connectionStatus)
                         || VesperaConnectionService.STATUS_LOST.equals(connectionStatus)
                         || VesperaConnectionService.STATUS_UNAVAILABLE.equals(connectionStatus)) {
@@ -247,6 +265,20 @@ public final class MainActivity extends Activity {
         disconnect = new Button(this);
         disconnect.setText(R.string.btn_disconnect);
         disconnect.setOnClickListener(v -> disconnect());
+        hostInput = new EditText(this);
+        hostInput.setHint(R.string.hint_host);
+        hostInput.setText("10.0.0.1");
+        hostInput.setSingleLine(true);
+        portInput = new EditText(this);
+        portInput.setHint(R.string.hint_port);
+        portInput.setText("8083");
+        portInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        portInput.setSingleLine(true);
+        verify = new Button(this);
+        verify.setText(R.string.btn_verify);
+        verify.setOnClickListener(v -> verifyReachability());
+        actionResult = new TextView(this);
+        actionResult.setText(R.string.action_result_idle);
         refreshConnectButtons();
         layout.addView(status);
         layout.addView(connectionInfo);
@@ -275,6 +307,10 @@ public final class MainActivity extends Activity {
 
         layout.addView(connect);
         layout.addView(disconnect);
+        layout.addView(hostInput);
+        layout.addView(portInput);
+        layout.addView(verify);
+        layout.addView(actionResult);
         scroll.addView(layout);
         scroll.setOnApplyWindowInsetsListener((v, insets) -> {
             int insetBottom = insets.getSystemWindowInsetBottom();
@@ -317,6 +353,7 @@ public final class MainActivity extends Activity {
     }
 
     private void saveManualDevice() {
+        autoConnectPending = false;
         String ssid = ssidInput.getText().toString().trim();
         String bssid = bssidInput.getText().toString().trim();
         if (!VesperaDeviceStore.isVesperaSsid(ssid)) {
@@ -334,6 +371,7 @@ public final class MainActivity extends Activity {
     }
 
     private void selectScannedDevice(ScanResult result) {
+        autoConnectPending = false;
         deviceStore.saveFromScan(result);
         ssidInput.setText(result.SSID);
         bssidInput.setText(result.BSSID == null ? "" : result.BSSID.toLowerCase(Locale.US));
@@ -437,6 +475,19 @@ public final class MainActivity extends Activity {
             showConnectingDeviceBar();
         }
         refreshConnectButtons();
+        maybeAutoConnect();
+    }
+
+    private void maybeAutoConnect() {
+        if (!autoConnectPending
+                || !savedDeviceOnline
+                || !deviceStore.isConfigured()
+                || isVesperaConnected()
+                || isVesperaRequesting()) {
+            return;
+        }
+        autoConnectPending = false;
+        connect();
     }
 
     private LinearLayout buildScanLegendRow(float density) {
@@ -593,7 +644,65 @@ public final class MainActivity extends Activity {
         refreshConnectButtons();
     }
 
+    private void discoverApiPort() {
+        if (portDiscoveryRunning) return;
+        Network network = VesperaConnectionService.getActiveNetwork();
+        if (network == null) return;
+        portDiscoveryRunning = true;
+        probeExecutor.execute(() -> {
+            int detectedPort = -1;
+            for (int candidate : VESPERA_API_PORTS) {
+                try (Socket socket = network.getSocketFactory().createSocket()) {
+                    socket.connect(new InetSocketAddress("10.0.0.1", candidate), 1_500);
+                    detectedPort = candidate;
+                    break;
+                } catch (IOException ignored) {
+                    // Try the other known Vespera API port.
+                }
+            }
+            int result = detectedPort;
+            mainHandler.post(() -> {
+                portDiscoveryRunning = false;
+                if (result > 0) {
+                    hostInput.setText("10.0.0.1");
+                    portInput.setText(String.valueOf(result));
+                    actionResult.setText(getString(R.string.api_port_detected, result));
+                } else {
+                    actionResult.setText(R.string.api_port_not_found);
+                }
+            });
+        });
+    }
+
+    private void verifyReachability() {
+        Network network = VesperaConnectionService.getActiveNetwork();
+        if (network == null) {
+            showVerification(getString(R.string.no_vespera_network));
+            return;
+        }
+        String host = hostInput.getText().toString().trim();
+        final int port;
+        try {
+            port = Integer.parseInt(portInput.getText().toString().trim());
+            if (port < 1 || port > 65535) throw new NumberFormatException();
+        } catch (NumberFormatException invalidPort) {
+            showVerification(getString(R.string.invalid_port));
+            return;
+        }
+        showVerification(getString(R.string.verifying, host, port));
+        probeExecutor.execute(() -> {
+            try (Socket socket = network.getSocketFactory().createSocket()) {
+                socket.connect(new InetSocketAddress(host, port), 5_000);
+                showVerification(getString(R.string.reachable, host, port));
+            } catch (IOException failure) {
+                showVerification(getString(R.string.not_reachable,
+                        host, port, failure.getClass().getSimpleName()));
+            }
+        });
+    }
+
     private void disconnect() {
+        autoConnectPending = false;
         connectRequested = false;
         Intent service = new Intent(this, VesperaConnectionService.class)
                 .setAction(VesperaConnectionService.ACTION_DISCONNECT);
@@ -615,6 +724,13 @@ public final class MainActivity extends Activity {
         mainHandler.post(() -> status.setText(message));
     }
 
+    private void showVerification(String message) {
+        mainHandler.post(() -> {
+            status.setText(message);
+            actionResult.setText(getString(R.string.action_result, message));
+        });
+    }
+
     private void setConnectionState(String code) {
         mainHandler.post(() -> {
             if (code == null || !code.startsWith(VesperaConnectionService.STATUS_REQUESTING)) {
@@ -622,6 +738,10 @@ public final class MainActivity extends Activity {
             }
             connectionInfo.setText(getString(R.string.connection_state,
                     StatusTexts.connection(this, code)));
+            if (VesperaConnectionService.STATUS_CONNECTED.equals(code)) {
+                status.setText(getString(R.string.connected_to,
+                        deviceStore.getModel(), deviceStore.getSsid()));
+            }
             refreshConnectButtons();
             if (deviceStatusBar == null) return;
             if (code != null && code.startsWith(VesperaConnectionService.STATUS_REQUESTING)) {
@@ -692,6 +812,7 @@ public final class MainActivity extends Activity {
         setConnectionState(currentConnectionStatus);
         if (VesperaConnectionService.STATUS_CONNECTED.equals(currentConnectionStatus)) {
             VesperaConnectionService.requestDaemonRoute(this);
+            discoverApiPort();
         }
         if (!scanReceiverRegistered) {
             IntentFilter filter = new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION);
@@ -712,6 +833,11 @@ public final class MainActivity extends Activity {
             statusReceiverRegistered = true;
         }
         refreshVesperaScan();
+    }
+
+    @Override protected void onDestroy() {
+        probeExecutor.shutdownNow();
+        super.onDestroy();
     }
 
     @Override protected void onPause() {

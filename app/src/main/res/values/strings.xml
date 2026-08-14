@@ -24,6 +24,13 @@
     <string name="btn_connect">Connetti Vespera</string>
     <string name="btn_connecting">Connessione…</string>
     <string name="btn_disconnect">Disconnetti</string>
+    <string name="hint_host">IP del Vespera (es. 10.0.0.1)</string>
+    <string name="hint_port">Porta TCP (es. 8083)</string>
+    <string name="btn_verify">Verifica Wi-Fi / Vespera</string>
+    <string name="action_result_idle">Esito verifica: —</string>
+    <string name="action_result">Esito: %1$s</string>
+    <string name="api_port_detected">Porta API Vespera rilevata: %1$d</string>
+    <string name="api_port_not_found">Nessuna API Vespera rilevata su 8083/8082.</string>
     <string name="scan_hint">Tocca «Cerca strumenti Vespera» per elencare le reti vicine.</string>
     <string name="ready_for">Pronto per %1$s / %2$s</string>
     <string name="device_cleared">Strumento cancellato.</string>
@@ -60,6 +67,12 @@
     <string name="location_settings_fail">Impossibile aprire le impostazioni Posizione su questa ROM.</string>
     <string name="select_device_first">Seleziona o salva prima il tuo Vespera (I / II / Pro).</string>
     <string name="connecting_to">Connessione a %1$s / %2$s…</string>
+    <string name="connected_to">Connesso a %1$s / %2$s.</string>
+    <string name="no_vespera_network">Nessuna rete Vespera disponibile: connetti prima.</string>
+    <string name="invalid_port">Porta TCP non valida.</string>
+    <string name="verifying">Verifica %1$s:%2$d sulla Wi-Fi Vespera…</string>
+    <string name="reachable">Vespera raggiungibile su %1$s:%2$d.</string>
+    <string name="not_reachable">%1$s:%2$d non risponde via rete Vespera: %3$s</string>
     <string name="stale_lost">Connessione persa%1$s. IP/porta precedenti non sono più valide finché non riconnetti.</string>
     <string name="stale_disconnected">Non connesso%1$s. IP/porta precedenti non sono più valide finché non riconnetti.</string>
     <string name="perm_denied_status">Serve Posizione precisa (e Wi-Fi nelle vicinanze) per cercare/connettere il Vespera.</string>
