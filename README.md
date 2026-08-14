@@ -17,5 +17,6 @@ L'app mantiene una richiesta Wi-Fi generica e chiede al daemon root `tools/vespe
 | 0.3.8 | 14 | Marcatori ● salvato / ✓ connesso |
 | 0.4.0 | 15 | Selettore lingua IT/EN/ES in alto a destra; testi UI localizzati |
 | 0.5 | 41 | Connessione Vespera system-wide e route diretta; rimossi VPN e fallback locali non funzionanti |
+| 0.5.2 | 43 | Watchdog Singularity (solo in primo piano): controllo ogni 5 s e manuale via daemon `check-singularity`; su failure refresh route + riavvio Singularity |
 
 Il daemon deve essere avviato come root sul Pi dopo il boot; l'app comunica con esso tramite `net.req` nella propria directory esterna.

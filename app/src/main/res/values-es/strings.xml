@@ -24,6 +24,7 @@
     <string name="hint_host">IP del Vespera (ej. 10.0.0.1)</string>
     <string name="hint_port">Puerto TCP (ej. 8083)</string>
     <string name="btn_verify">Verificar Wi-Fi / Vespera</string>
+    <string name="btn_check_instrument">Comprobar detección en Singularity</string>
     <string name="action_result_idle">Resultado verificación: —</string>
     <string name="action_result">Resultado: %1$s</string>
     <string name="api_port_detected">Puerto API Vespera detectado: %1$d</string>
@@ -87,5 +88,21 @@
     <string name="conn_error">error: %1$s — comprueba SSID/BSSID</string>
     <string name="conn_notification_title">Vespera Wi-Fi Helper</string>
     <string name="conn_notification_connecting">Conexión Vespera solicitada</string>
+
+    <string name="watchdog_not_connected">No conectado al Vespera: no se puede comprobar Singularity.</string>
+    <string name="watchdog_checking">Comprobando detección del instrumento en Singularity…</string>
+    <string name="watchdog_singularity_detected">Singularity detecta el instrumento (conexión activa).</string>
+    <string name="watchdog_singularity_not_detected">Singularity no detecta el instrumento.</string>
+    <string name="watchdog_singularity_not_running">Singularity no está en ejecución.</string>
+    <string name="watchdog_singularity_api_down">API Vespera inaccesible: Singularity no puede conectarse.</string>
+    <string name="watchdog_singularity_no_wifi">Wi‑Fi del sistema no asociada al Vespera.</string>
+    <string name="watchdog_singularity_no_daemon">Daemon vespera-netd ausente o desactualizado (requiere check-singularity).</string>
+    <string name="watchdog_recovering">Singularity sin instrumento: actualizo ruta y reinicio Singularity…</string>
+    <string name="watchdog_recovering_route_only">Singularity sin instrumento: actualizo ruta (reinicio Singularity en espera)…</string>
+    <string name="watchdog_recovered_route">Singularity detecta el instrumento tras actualizar la ruta.</string>
+    <string name="watchdog_recovered_restart">Singularity detecta el instrumento tras reiniciar.</string>
+    <string name="watchdog_restart_failed">Singularity sigue sin instrumento tras reiniciar.</string>
+    <string name="watchdog_restart_cooldown">Ruta actualizada; reinicio Singularity aplazado (cooldown 30 s).</string>
+    <string name="watchdog_manual_prefix">Comprobación manual: %1$s</string>
 
 </resources>
