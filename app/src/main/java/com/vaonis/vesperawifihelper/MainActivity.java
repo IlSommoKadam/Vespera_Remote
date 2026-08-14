@@ -43,7 +43,6 @@ import java.util.concurrent.Executors;
 public final class MainActivity extends Activity {
     private static final int LOCATION_REQUEST_CODE = 100;
     private static final int SCAN_PERMISSION_REQUEST_CODE = 102;
-    private static final int[] VESPERA_API_PORTS = {8083, 8082};
     private WifiManager wifiManager;
     private LocationManager locationManager;
     private VesperaDeviceStore deviceStore;
@@ -68,6 +67,7 @@ public final class MainActivity extends Activity {
     private Button connect;
     private Button disconnect;
     private Button verify;
+    private Button checkInstrument;
     private TextView actionResult;
     private Spinner languageSpinner;
     private boolean languageSpinnerReady;
@@ -84,6 +84,7 @@ public final class MainActivity extends Activity {
     private static final int COLOR_CONNECTED = 0xFF2E7D32;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
+    private InstrumentWatchdog instrumentWatchdog;
     private boolean scanReceiverRegistered;
     private final BroadcastReceiver scanResultsReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -92,6 +93,7 @@ public final class MainActivity extends Activity {
         }
     };
     private boolean statusReceiverRegistered;
+    private boolean instrumentStatusReceiverRegistered;
     private final BroadcastReceiver connectionStatusReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             String connectionStatus = intent.getStringExtra(VesperaConnectionService.EXTRA_STATUS);
@@ -102,12 +104,23 @@ public final class MainActivity extends Activity {
                     show(getString(R.string.connected_to,
                             deviceStore.getModel(), deviceStore.getSsid()));
                     discoverApiPort();
+                    startWatchdogIfConnected();
                 } else if (VesperaConnectionService.STATUS_DISCONNECTED.equals(connectionStatus)
                         || VesperaConnectionService.STATUS_LOST.equals(connectionStatus)
                         || VesperaConnectionService.STATUS_UNAVAILABLE.equals(connectionStatus)) {
+                    stopWatchdog();
                     clearStaleReachabilityStatus(connectionStatus);
                 }
             }
+        }
+    };
+    private final BroadcastReceiver instrumentStatusReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            String message = intent.getStringExtra(InstrumentWatchdog.EXTRA_MESSAGE);
+            if (message == null) return;
+            boolean detected = intent.getBooleanExtra(InstrumentWatchdog.EXTRA_DETECTED, false);
+            int port = intent.getIntExtra(InstrumentWatchdog.EXTRA_PORT, -1);
+            showInstrumentStatus(message, detected, port);
         }
     };
 
@@ -277,6 +290,9 @@ public final class MainActivity extends Activity {
         verify = new Button(this);
         verify.setText(R.string.btn_verify);
         verify.setOnClickListener(v -> verifyReachability());
+        checkInstrument = new Button(this);
+        checkInstrument.setText(R.string.btn_check_instrument);
+        checkInstrument.setOnClickListener(v -> requestInstrumentCheck());
         actionResult = new TextView(this);
         actionResult.setText(R.string.action_result_idle);
         refreshConnectButtons();
@@ -310,6 +326,7 @@ public final class MainActivity extends Activity {
         layout.addView(hostInput);
         layout.addView(portInput);
         layout.addView(verify);
+        layout.addView(checkInstrument);
         layout.addView(actionResult);
         scroll.addView(layout);
         scroll.setOnApplyWindowInsetsListener((v, insets) -> {
@@ -650,16 +667,7 @@ public final class MainActivity extends Activity {
         if (network == null) return;
         portDiscoveryRunning = true;
         probeExecutor.execute(() -> {
-            int detectedPort = -1;
-            for (int candidate : VESPERA_API_PORTS) {
-                try (Socket socket = network.getSocketFactory().createSocket()) {
-                    socket.connect(new InetSocketAddress("10.0.0.1", candidate), 1_500);
-                    detectedPort = candidate;
-                    break;
-                } catch (IOException ignored) {
-                    // Try the other known Vespera API port.
-                }
-            }
+            int detectedPort = InstrumentWatchdog.probeApiPort(network);
             int result = detectedPort;
             mainHandler.post(() -> {
                 portDiscoveryRunning = false;
@@ -671,6 +679,44 @@ public final class MainActivity extends Activity {
                     actionResult.setText(R.string.api_port_not_found);
                 }
             });
+        });
+    }
+
+    private void requestInstrumentCheck() {
+        if (!isVesperaConnected()) {
+            showInstrumentStatus(getString(R.string.watchdog_not_connected), false, -1);
+            return;
+        }
+        showInstrumentStatus(getString(R.string.watchdog_checking), false, -1);
+        ensureWatchdog().requestManualCheck();
+    }
+
+    private InstrumentWatchdog ensureWatchdog() {
+        if (instrumentWatchdog == null) {
+            instrumentWatchdog = new InstrumentWatchdog(this);
+        }
+        return instrumentWatchdog;
+    }
+
+    private void startWatchdogIfConnected() {
+        if (isVesperaConnected()) {
+            ensureWatchdog().start();
+        }
+    }
+
+    private void stopWatchdog() {
+        if (instrumentWatchdog != null) {
+            instrumentWatchdog.stop();
+        }
+    }
+
+    private void showInstrumentStatus(String message, boolean detected, int port) {
+        mainHandler.post(() -> {
+            actionResult.setText(getString(R.string.action_result, message));
+            if (detected && port > 0) {
+                hostInput.setText("10.0.0.1");
+                portInput.setText(String.valueOf(port));
+            }
         });
     }
 
@@ -704,6 +750,7 @@ public final class MainActivity extends Activity {
     private void disconnect() {
         autoConnectPending = false;
         connectRequested = false;
+        stopWatchdog();
         Intent service = new Intent(this, VesperaConnectionService.class)
                 .setAction(VesperaConnectionService.ACTION_DISCONNECT);
         startService(service);
@@ -813,6 +860,7 @@ public final class MainActivity extends Activity {
         if (VesperaConnectionService.STATUS_CONNECTED.equals(currentConnectionStatus)) {
             VesperaConnectionService.requestDaemonRoute(this);
             discoverApiPort();
+            startWatchdogIfConnected();
         }
         if (!scanReceiverRegistered) {
             IntentFilter filter = new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION);
@@ -832,15 +880,30 @@ public final class MainActivity extends Activity {
             }
             statusReceiverRegistered = true;
         }
+        if (!instrumentStatusReceiverRegistered) {
+            IntentFilter filter = new IntentFilter(InstrumentWatchdog.ACTION_STATUS);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(instrumentStatusReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(instrumentStatusReceiver, filter);
+            }
+            instrumentStatusReceiverRegistered = true;
+        }
         refreshVesperaScan();
     }
 
     @Override protected void onDestroy() {
+        stopWatchdog();
+        if (instrumentWatchdog != null) {
+            instrumentWatchdog.shutdown();
+            instrumentWatchdog = null;
+        }
         probeExecutor.shutdownNow();
         super.onDestroy();
     }
 
     @Override protected void onPause() {
+        stopWatchdog();
         if (scanReceiverRegistered) {
             unregisterReceiver(scanResultsReceiver);
             scanReceiverRegistered = false;
@@ -848,6 +911,10 @@ public final class MainActivity extends Activity {
         if (statusReceiverRegistered) {
             unregisterReceiver(connectionStatusReceiver);
             statusReceiverRegistered = false;
+        }
+        if (instrumentStatusReceiverRegistered) {
+            unregisterReceiver(instrumentStatusReceiver);
+            instrumentStatusReceiverRegistered = false;
         }
         super.onPause();
     }

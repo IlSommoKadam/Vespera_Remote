@@ -34,6 +34,7 @@ import java.util.concurrent.Executors;
 public final class VesperaConnectionService extends Service {
     public static final String ACTION_CONNECT = "com.vaonis.vesperawifihelper.CONNECT";
     public static final String ACTION_DISCONNECT = "com.vaonis.vesperawifihelper.DISCONNECT";
+    public static final String ACTION_REFRESH = "com.vaonis.vesperawifihelper.REFRESH";
     public static final String ACTION_STATUS = "com.vaonis.vesperawifihelper.STATUS";
     public static final String EXTRA_STATUS = "status";
 
@@ -77,6 +78,10 @@ public final class VesperaConnectionService extends Service {
         if (ACTION_DISCONNECT.equals(action)) {
             stopConnection();
             stopSelf();
+            return START_NOT_STICKY;
+        }
+        if (ACTION_REFRESH.equals(action)) {
+            findConnectedVespera();
             return START_NOT_STICKY;
         }
         Context localized = AppLocale.wrap(this);
@@ -155,6 +160,23 @@ public final class VesperaConnectionService extends Service {
     /** Ask daemon to refresh 10.0.0.0/24 → wlan0 rule (no VPN). */
     public static void requestDaemonRoute(Context context) {
         writeNetRequestStatic(context, "route");
+    }
+
+    /** Ask rooted daemon to force-stop Singularity (requires {@code vespera-netd.sh}). */
+    public static void requestSingularityRestart(Context context) {
+        writeNetRequest(context, "restart-singularity");
+    }
+
+    /** Ask daemon to probe whether Singularity sees the Vespera instrument. */
+    public static boolean writeNetRequest(Context context, String line) {
+        return writeNetRequestStatic(context, line);
+    }
+
+    /** Re-scan active networks and adopt the saved Vespera if present. */
+    public static void refreshConnectedNetwork(Context context) {
+        Intent intent = new Intent(context, VesperaConnectionService.class)
+                .setAction(ACTION_REFRESH);
+        context.startService(intent);
     }
 
     private boolean writeNetRequest(String line) {

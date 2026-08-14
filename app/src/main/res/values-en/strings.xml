@@ -24,6 +24,7 @@
     <string name="hint_host">Vespera IP (e.g. 10.0.0.1)</string>
     <string name="hint_port">TCP port (e.g. 8083)</string>
     <string name="btn_verify">Verify Wi-Fi / Vespera</string>
+    <string name="btn_check_instrument">Check Singularity detection</string>
     <string name="action_result_idle">Verify result: —</string>
     <string name="action_result">Result: %1$s</string>
     <string name="api_port_detected">Vespera API port detected: %1$d</string>
@@ -87,5 +88,21 @@
     <string name="conn_error">error: %1$s — check SSID/BSSID</string>
     <string name="conn_notification_title">Vespera Wi-Fi Helper</string>
     <string name="conn_notification_connecting">Vespera connection requested</string>
+
+    <string name="watchdog_not_connected">Not connected to Vespera: cannot check Singularity.</string>
+    <string name="watchdog_checking">Checking instrument detection in Singularity…</string>
+    <string name="watchdog_singularity_detected">Singularity sees the instrument (active connection).</string>
+    <string name="watchdog_singularity_not_detected">Singularity does not see the instrument.</string>
+    <string name="watchdog_singularity_not_running">Singularity is not running.</string>
+    <string name="watchdog_singularity_api_down">Vespera API unreachable: Singularity cannot connect.</string>
+    <string name="watchdog_singularity_no_wifi">System Wi‑Fi is not associated with the Vespera.</string>
+    <string name="watchdog_singularity_no_daemon">vespera-netd daemon missing or outdated (needs check-singularity).</string>
+    <string name="watchdog_recovering">Singularity missing instrument: refreshing route and restarting Singularity…</string>
+    <string name="watchdog_recovering_route_only">Singularity missing instrument: refreshing route (Singularity restart on cooldown)…</string>
+    <string name="watchdog_recovered_route">Singularity sees the instrument after route refresh.</string>
+    <string name="watchdog_recovered_restart">Singularity sees the instrument after restart.</string>
+    <string name="watchdog_restart_failed">Singularity still missing the instrument after restart.</string>
+    <string name="watchdog_restart_cooldown">Route refreshed; Singularity restart deferred (30 s cooldown).</string>
+    <string name="watchdog_manual_prefix">Manual check: %1$s</string>
 
 </resources>
