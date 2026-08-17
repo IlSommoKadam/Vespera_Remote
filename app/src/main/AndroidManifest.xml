@@ -51,6 +51,22 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+        <activity
+            android:name=".HdBrowserActivity"
+            android:exported="true"
+            android:icon="@drawable/ic_hd_launcher"
+            android:label="@string/hd_browser_shortcut_label"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.vaonis.vesperahelper.hdbrowser"
+            android:theme="@style/AppTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
         </activity>
         <activity
             android:name=".SyncProgressActivity"

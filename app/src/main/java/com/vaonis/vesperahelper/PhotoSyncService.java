@@ -34,7 +34,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Mounts the USB HD, syncs Vespera /USER photos by day, and serves them over FTP. */
+/** Mounts the USB HD, syncs Vespera /USER photos around the clock, and serves them over FTP. */
 public final class PhotoSyncService extends Service {
     public static final String ACTION_STATUS = "com.vaonis.vesperahelper.PHOTO_STATUS";
     public static final String ACTION_PROGRESS = "com.vaonis.vesperahelper.PHOTO_PROGRESS";
@@ -61,13 +61,12 @@ public final class PhotoSyncService extends Service {
     public static final String EXTRA_FILE_COUNT = "file_count";
     public static final String EXTRA_LAST_SYNC = "last_sync";
     public static final String EXTRA_MOUNTED = "mounted";
+    public static final String EXTRA_EJECTED = "ejected";
     public static final String EXTRA_FTP_RUNNING = "ftp_running";
     public static final String EXTRA_SELECTED = "selected";
     public static final String EXTRA_SYNCING = "syncing";
     public static final String EXTRA_PAUSED = "paused";
 
-    public static final int DAY_START_HOUR = 7;
-    public static final int DAY_END_HOUR = 19;
     private static final String TAG = "VesperaPhotos";
     private static final int NOTIFICATION_ID = 43;
     private static final long TICK_MS = 30_000;
@@ -84,6 +83,8 @@ public final class PhotoSyncService extends Service {
     private UsbHdStore hdStore;
     private PhotoSyncStore syncStore;
     private boolean mounted;
+    private boolean ejected;
+    private boolean emptyAfterEject;
     private String mountLabel = "";
     private String selectedSpec = "";
     private String[] disksEncoded = new String[0];
@@ -104,7 +105,7 @@ public final class PhotoSyncService extends Service {
             String status = intent.getStringExtra(VesperaConnectionService.EXTRA_STATUS);
             if (VesperaConnectionService.STATUS_CONNECTED.equals(status)) {
                 worker.execute(PhotoSyncService.this::refreshTelescopeFtpLocked);
-                syncExecutor.execute(() -> maybeAutoSync(shouldResume()));
+                syncExecutor.execute(PhotoSyncService.this::resumeSuspendedIfNeeded);
             } else {
                 worker.execute(() -> {
                     telescopeFtp.stop();
@@ -117,6 +118,7 @@ public final class PhotoSyncService extends Service {
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             worker.execute(() -> {
+                refreshMountStatus();
                 maybeAutoMount();
                 refreshTelescopeFtpLocked();
                 publish();
@@ -189,16 +191,6 @@ public final class PhotoSyncService extends Service {
                 .setAction(ACTION_FORGET));
     }
 
-    public static boolean isDaytime() {
-        int hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
-        return hour >= PhotoSyncStore.DEFAULT_DAY_START && hour < PhotoSyncStore.DEFAULT_DAY_END;
-    }
-
-    private boolean isDaytimeLocal() {
-        int hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
-        return hour >= syncStore.dayStartHour() && hour < syncStore.dayEndHour();
-    }
-
     @Override public void onCreate() {
         super.onCreate();
         hdStore = UsbHdStore.from(this);
@@ -232,7 +224,7 @@ public final class PhotoSyncService extends Service {
             refreshTelescopeFtpLocked();
             listDisksLocked();
             publish();
-            syncExecutor.execute(() -> maybeAutoSync(shouldResume()));
+            syncExecutor.execute(PhotoSyncService.this::resumeSuspendedIfNeeded);
         });
         mainHandler.postDelayed(tick, TICK_MS);
     }
@@ -246,8 +238,10 @@ public final class PhotoSyncService extends Service {
                 refreshMountStatus();
                 bootstrapMountLocked();
                 if (mounted) startFtpLocked();
+                refreshTelescopeFtpLocked();
                 listDisksLocked();
                 publish();
+                syncExecutor.execute(PhotoSyncService.this::resumeSuspendedIfNeeded);
             });
         } else if (ACTION_REFRESH_DISKS.equals(action) || ACTION_LIST_DISKS.equals(action)) {
             worker.execute(() -> {
@@ -350,7 +344,17 @@ public final class PhotoSyncService extends Service {
         List<String> encoded = new ArrayList<>();
         for (UsbDisk disk : disks) encoded.add(disk.encode());
         disksEncoded = encoded.toArray(new String[0]);
-        if (raw == null) {
+        if (ejected && !mounted) {
+            if (disks.isEmpty()) {
+                emptyAfterEject = true;
+            } else if (emptyAfterEject) {
+                ejected = false;
+                emptyAfterEject = false;
+            }
+        }
+        if (ejected && !mounted) {
+            message = localized.getString(R.string.photos_eject_ok);
+        } else if (raw == null) {
             message = localized.getString(R.string.photos_daemon_timeout);
         } else if (disks.isEmpty()) {
             message = localized.getString(R.string.photos_none);
@@ -375,6 +379,8 @@ public final class PhotoSyncService extends Service {
         }
         selectedSpec = use;
         userUnmounted = false;
+        ejected = false;
+        emptyAfterEject = false;
         DaemonDisk.MountStatus status = DaemonDisk.mount(this, use);
         applyMountStatus(status);
         if (status.timeout) {
@@ -436,9 +442,13 @@ public final class PhotoSyncService extends Service {
         if (status.timeout) {
             message = localized.getString(R.string.photos_daemon_timeout);
         } else if (status.raw.startsWith("ejected") || !status.mounted) {
+            ejected = true;
+            emptyAfterEject = false;
             message = localized.getString(R.string.photos_eject_ok);
         } else {
             userUnmounted = false;
+            ejected = false;
+            emptyAfterEject = false;
             message = localized.getString(R.string.photos_eject_fail, status.raw);
         }
         listDisksLocked();
@@ -454,7 +464,8 @@ public final class PhotoSyncService extends Service {
     }
 
     private void bootstrapMountLocked() {
-        if (mounted) return;
+        refreshMountStatus();
+        if (DaemonDisk.isPhotosBoundLive(DaemonDisk.photosDir(this))) return;
         Context localized = AppLocale.wrap(this);
         message = localized.getString(R.string.photo_hd_auto_mount,
                 hdStore.displayName().isEmpty() ? "HD" : hdStore.displayName());
@@ -468,7 +479,10 @@ public final class PhotoSyncService extends Service {
 
     private void maybeAutoMount() {
         if (userUnmounted) return;
-        if (mounted) return;
+        if (DaemonDisk.isPhotosBoundLive(DaemonDisk.photosDir(this))) {
+            if (!mounted) refreshMountStatus();
+            return;
+        }
         String spec = hdStore.getSpec();
         if (spec.isEmpty()) spec = UsbDiskStore.from(this).getId();
         if (spec.isEmpty() && disksEncoded != null && disksEncoded.length == 1) {
@@ -514,6 +528,9 @@ public final class PhotoSyncService extends Service {
 
     private void refreshMountStatus() {
         DaemonDisk.MountStatus status = DaemonDisk.status(this);
+        if (status != null && status.mounted && !DaemonDisk.isPhotosBoundLive(DaemonDisk.photosDir(this))) {
+            status = DaemonDisk.ensureBind(this);
+        }
         applyMountStatus(status);
         if (mounted) startFtpLocked();
         else stopFtpLocked();
@@ -523,6 +540,8 @@ public final class PhotoSyncService extends Service {
         Context localized = AppLocale.wrap(this);
         mounted = status != null && status.mounted && !status.timeout;
         if (mounted) {
+            ejected = false;
+            emptyAfterEject = false;
             mountLabel = !"-".equals(status.label) ? status.label
                     : (!"-".equals(status.uuid) ? status.uuid : status.device);
             hdStatus = localized.getString(R.string.photos_hd_mounted, mountLabel);
@@ -556,10 +575,6 @@ public final class PhotoSyncService extends Service {
             syncStatus = localized.getString(R.string.photos_sync_need_vespera);
             return;
         }
-        if (!isDaytimeLocal()) {
-            syncStatus = localized.getString(R.string.photos_sync_night, syncStore.dayStartHour());
-            return;
-        }
         long nextAt = syncStore.nextAutoAt(System.currentTimeMillis());
         syncStatus = localized.getString(R.string.photos_sync_next,
                 formatClock(nextAt),
@@ -575,7 +590,7 @@ public final class PhotoSyncService extends Service {
 
     private void maybeAutoSync(boolean force) {
         Context localized = AppLocale.wrap(this);
-        boolean resume = shouldResume();
+        boolean resume = shouldResume() || (force && hasSuspendedWork());
         synchronized (syncLock) {
             if (syncing) {
                 if ((force || resume) && hud != null) hud.show();
@@ -593,16 +608,25 @@ public final class PhotoSyncService extends Service {
         }
         ensureMountedForSync();
         File root = DaemonDisk.photosDir(this);
+        if (!DaemonDisk.isPhotosBoundLive(root)) {
+            DaemonDisk.MountStatus rebound = DaemonDisk.ensureBind(this);
+            applyMountStatus(rebound);
+            root = DaemonDisk.photosDir(this);
+        }
         if (!mounted || root == null || !root.isDirectory()) {
             message = localized.getString(R.string.photos_sync_need_hd);
-            if (force) {
+            if (force || resume) {
                 showSyncGate(SyncProgress.PHASE_ERROR, message);
             }
             refreshSyncHint();
             publish();
             return;
         }
-        if (!force && !resume && !isDaytimeLocal()) {
+        if (!DaemonDisk.isPhotosBoundLive(root) && !root.canWrite()) {
+            message = localized.getString(R.string.photos_sync_local_user);
+            if (force || resume) {
+                showSyncGate(SyncProgress.PHASE_ERROR, message);
+            }
             refreshSyncHint();
             publish();
             return;
@@ -610,10 +634,13 @@ public final class PhotoSyncService extends Service {
         Network network = resolveVesperaNetwork();
         if (network == null && !isVesperaConnected() && !canReachVesperaFtp(null)) {
             message = localized.getString(R.string.photos_sync_need_vespera);
-            if (force) {
+            if (force && !resume) {
                 showSyncGate(SyncProgress.PHASE_ERROR, message);
+            } else if (resume) {
+                syncStatus = localized.getString(R.string.photo_sync_resume_wait_vespera);
+                message = syncStatus;
+                refreshSyncHint();
             }
-            refreshSyncHint();
             publish();
             return;
         }
@@ -664,6 +691,8 @@ public final class PhotoSyncService extends Service {
                 lastSync = localized.getString(R.string.photos_sync_no_user);
             } else if ("hd-unmounted".equals(result.error)) {
                 lastSync = localized.getString(R.string.photos_sync_need_hd);
+            } else if ("local-user".equals(result.error)) {
+                lastSync = localized.getString(R.string.photos_sync_local_user);
             } else {
                 lastSync = localized.getString(R.string.photos_sync_error, result.error);
             }
@@ -737,6 +766,33 @@ public final class PhotoSyncService extends Service {
         File root = DaemonDisk.photosDir(this);
         return (syncStore != null && syncStore.shouldResume(this))
                 || PhotoSyncEngine.hasIncomplete(root);
+    }
+
+    private boolean hasSuspendedWork() {
+        File root = DaemonDisk.photosDir(this);
+        return (syncStore != null && syncStore.hasSuspendedWork(this))
+                || PhotoSyncEngine.hasIncomplete(root);
+    }
+
+    /**
+     * On app/service restart (or when Vespera comes back), continue any sync that
+     * was left paused, interrupted, or with leftover {@code .part} files.
+     */
+    private void resumeSuspendedIfNeeded() {
+        if (!hasSuspendedWork()) {
+            maybeAutoSync(false);
+            return;
+        }
+        Log.i(TAG, "suspended sync detected — auto resume");
+        pauseRequested.set(false);
+        if (syncStore != null) {
+            syncStore.clearPauseForAutoResume();
+            syncStore.markInProgress(this);
+        }
+        Context localized = AppLocale.wrap(this);
+        syncStatus = localized.getString(R.string.photo_sync_resume);
+        publish();
+        maybeAutoSync(true);
     }
 
     private String formatSyncSummary(Context localized, PhotoSyncEngine.Result result, File localUser) {
@@ -994,6 +1050,7 @@ public final class PhotoSyncService extends Service {
                 .putExtra(EXTRA_FILE_COUNT, fileCount)
                 .putExtra(EXTRA_LAST_SYNC, last)
                 .putExtra(EXTRA_MOUNTED, mounted)
+                .putExtra(EXTRA_EJECTED, ejected)
                 .putExtra(EXTRA_FTP_RUNNING, ftpServer.isRunning())
                 .putExtra(EXTRA_SELECTED, selectedSpec)
                 .putExtra(EXTRA_SYNCING, syncing)

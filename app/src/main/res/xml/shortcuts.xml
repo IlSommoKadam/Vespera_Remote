@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_hd_launcher"
+        android:shortcutId="browse_hd"
+        android:shortcutLongLabel="@string/hd_browser_shortcut_label"
+        android:shortcutShortLabel="@string/hd_browser_shortcut_short">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="com.vaonis.vesperahelper.HdBrowserActivity"
+            android:targetPackage="com.vaonis.vesperahelper" />
+    </shortcut>
+</shortcuts>

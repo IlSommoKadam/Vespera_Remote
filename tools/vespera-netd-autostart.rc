@@ -1,4 +1,5 @@
 # Persistent vespera-netd: init restarts this if it dies.
+# Only this service may run the wrapper — do not setsid a second copy.
 service vespera_netd /system/bin/sh /system/bin/vespera-netd-autostart.sh
     class late_start
     user root
@@ -6,5 +7,19 @@ service vespera_netd /system/bin/sh /system/bin/vespera-netd-autostart.sh
     seclabel u:r:su:s0
     disabled
 
+# One-shot sync+umount before reboot/shutdown (keeps HD_STATE for remount).
+service vespera_hd_shutdown /system/bin/sh /system/bin/vespera-hd-shutdown.sh
+    class late_start
+    user root
+    group root
+    seclabel u:r:su:s0
+    oneshot
+    disabled
+
 on property:sys.boot_completed=1
     start vespera_netd
+
+# Android sets sys.powerctl=reboot|shutdown|... before powering off.
+on property:sys.powerctl=*
+    stop vespera_netd
+    start vespera_hd_shutdown

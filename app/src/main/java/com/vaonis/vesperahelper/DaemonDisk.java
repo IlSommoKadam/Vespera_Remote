@@ -2,6 +2,9 @@ package com.vaonis.vesperahelper;
 
 import android.content.Context;
 import android.os.SystemClock;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.StructStat;
 import android.util.Log;
 
 import java.io.File;
@@ -60,16 +63,39 @@ public final class DaemonDisk {
             if (looksLikeMountedPhotos(candidate)) return candidate;
         }
         for (File candidate : candidates) {
-            if (candidate != null && candidate.isDirectory()) return candidate;
+            if (candidate != null && candidate.isDirectory() && candidate.canWrite()) return candidate;
         }
         return fallback;
     }
 
+    /** True when the app-visible photos folder is a live bind of the USB HD. */
+    public static boolean isPhotosBoundLive(File dir) {
+        return looksLikeMountedPhotos(dir);
+    }
+
     private static boolean looksLikeMountedPhotos(File dir) {
         if (dir == null || !dir.isDirectory()) return false;
+        File parent = dir.getParentFile();
+        if (parent != null) {
+            try {
+                StructStat dirStat = Os.stat(dir.getAbsolutePath());
+                StructStat parentStat = Os.stat(parent.getAbsolutePath());
+                if (dirStat.st_dev != parentStat.st_dev) return true;
+            } catch (ErrnoException ignored) {
+            }
+        }
         File user = new File(dir, "USER");
-        File nomedia = new File(dir, ".nomedia");
-        return user.isDirectory() || nomedia.isFile();
+        if (!user.isDirectory()) user = new File(dir, "user");
+        if (user.isDirectory()) {
+            File[] kids = user.listFiles();
+            if (kids != null && kids.length > 0) return true;
+        }
+        return new File(dir, "$RECYCLE.BIN").isDirectory();
+    }
+
+    public static MountStatus ensureBind(Context context) {
+        String ack = request(context, "ensure-bind", MOUNT_ACK, LIST_TIMEOUT_MS);
+        return parseMount(ack);
     }
 
     public static List<UsbDisk> listDisks(Context context) {

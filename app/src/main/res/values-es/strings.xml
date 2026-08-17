@@ -137,12 +137,13 @@
     <string name="tab_wifi">Wi‑Fi</string>
     <string name="tab_photos">Fotos / HD</string>
     <string name="photo_section_hd">Disco USB</string>
-    <string name="photo_section_sync">Sincronización diurna</string>
+    <string name="photo_section_sync">Sincronización</string>
     <string name="photo_section_ftp">FTP (telescopio + disco duro)</string>
     <string name="photo_btn_refresh_disks">Actualizar discos</string>
     <string name="photo_btn_mount">Montar HD</string>
     <string name="photo_btn_unmount">Desmontar HD</string>
     <string name="photo_btn_eject">Desconectar HD</string>
+    <string name="photo_hd_safe_to_remove">Puedes extraer el HD de forma segura</string>
     <string name="photo_btn_sync_now">Sincronizar ahora</string>
     <string name="photo_btn_continue">Continuar</string>
     <string name="photo_hd_idle">Ningún disco seleccionado. Actualiza la lista, elige el HD y pulsa Montar.</string>
@@ -158,14 +159,14 @@
     <string name="photo_hd_not_saved">Ningún HD guardado: tras el primer montaje se remontará al arrancar.</string>
     <string name="photo_hd_saved">HD guardado: %1$s (id %2$s) — remontaje automático al arrancar.</string>
     <string name="photo_hd_row_mounted">montado</string>
-    <string name="photo_sync_idle">En espera. De día, si Vespera y el HD están listos, las fotos USER se copian, verifican y se borran en el instrumento.</string>
-    <string name="photo_sync_window">Ventana diurna: %1$02d:00–%2$02d:00 (hora del Pi). Por la noche la sync automática se pausa.</string>
+    <string name="photo_sync_idle">En espera. Durante todo el día, si Vespera y el HD están listos, las fotos USER se copian, verifican y se borran en el instrumento.</string>
+    <string name="photo_sync_window">Sync automática 24h (hora del Pi).</string>
     <string name="photo_sync_interval_label">Cada</string>
     <string name="photo_sync_interval_hint">2</string>
     <string name="photo_sync_interval_unit">horas</string>
     <string name="photo_sync_interval_apply">Aplicar</string>
-    <string name="photo_sync_interval_help">Sync automática cada %1$s h, solo entre %2$02d:00 y %3$02d:00 (hora del Pi). De noche no arranca.</string>
-    <string name="photo_sync_night">Fuera del horario diurno (%1$02d:00–%2$02d:00): sync automática en pausa.</string>
+    <string name="photo_sync_interval_help">Sync automática cada %1$s h, durante todo el día (hora del Pi).</string>
+    <string name="photo_sync_night">La sync automática también funciona de noche.</string>
     <string name="photo_sync_need_hd">Monta primero el HD USB.</string>
     <string name="photo_sync_need_wifi">Conecta primero el Vespera (pestaña Wi‑Fi).</string>
     <string name="photo_sync_running">Sincronizando carpeta USER…</string>
@@ -200,6 +201,7 @@
     <string name="photo_sync_overlay_hint">La transferencia, verificación y borrado siguen si cierras Helper. El permiso de superposición mantiene el progreso sobre Singularity.</string>
     <string name="photo_sync_overlay_ok">Superposición ya permitida: el progreso permanece en pantalla.</string>
     <string name="photo_sync_resume">Reanudación tras interrupción: comprobando estado y completando…</string>
+    <string name="photo_sync_resume_wait_vespera">Transferencia suspendida: esperando al Vespera para reanudar…</string>
     <string name="photo_ftp_off">FTP apagado.</string>
     <string name="photo_ftp_on">FTP en escucha.</string>
     <string name="photo_ftp_fail">No se pudo arrancar FTP: %1$s</string>
@@ -241,12 +243,26 @@
     <string name="photos_sync_running">@string/photo_sync_running</string>
     <string name="photos_sync_need_hd">@string/photo_sync_need_hd</string>
     <string name="photos_sync_need_vespera">@string/photo_sync_need_wifi</string>
-    <string name="photos_sync_night">pausa nocturna (se reanuda a las %1$02d:00)</string>
-    <string name="photos_sync_next">Próxima sync automática: %1$s (cada %2$s h de día).</string>
+    <string name="photos_sync_night">sync automática 24h</string>
+    <string name="photos_sync_next">Próxima sync automática: %1$s (cada %2$s h, todo el día).</string>
     <string name="photos_sync_file">@string/photo_sync_file</string>
     <string name="photos_sync_no_user">Falta la carpeta USER en el Vespera.</string>
+    <string name="photos_sync_local_user">HD no escribible: se perdió el bind USB. Pulsa Montar o reintenta tras reiniciar el daemon.</string>
     <string name="photos_sync_error">@string/photo_sync_fail</string>
     <string name="photos_sync_done">Sync OK: %1$d descargados, %2$d ya presentes, %3$d borrados en el Vespera, %4$d errores (%5$s)</string>
     <string name="photos_never_sync">Última sync: —</string>
+
+    <string name="hd_browser_shortcut_label">Fotos HD</string>
+    <string name="hd_browser_shortcut_short">Fotos HD</string>
+    <string name="hd_browser_title">Contenido HD</string>
+    <string name="hd_browser_root">HD</string>
+    <string name="hd_browser_loading">Leyendo carpeta…</string>
+    <string name="hd_browser_unmounted">HD no montado. Móntalo desde VesperaHelper (pestaña Fotos / HD) y reintenta.</string>
+    <string name="hd_browser_empty">Carpeta vacía.</string>
+    <string name="hd_browser_items">%1$d elementos — toca una foto para deslizarlas</string>
+    <string name="hd_browser_folder">carpeta</string>
+    <string name="hd_browser_up">Carpeta superior</string>
+    <string name="hd_browser_image_of">%1$d / %2$d</string>
+    <string name="hd_browser_not_preview">Sin vista previa de %1$s</string>
 
 </resources>

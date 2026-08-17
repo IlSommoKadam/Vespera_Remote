@@ -15,7 +15,7 @@ import java.util.Set;
 import java.util.function.BooleanSupplier;
 
 /**
- * Daytime pull of Vespera {@code /USER} photos onto the mounted USB HD.
+ * Pull of Vespera {@code /USER} photos onto the mounted USB HD.
  * After all copies are size-verified, matching remotes are deleted. Progress includes
  * bytes transferred and an ETA based on measured throughput.
  */
@@ -87,8 +87,8 @@ public final class PhotoSyncEngine {
         if (localRoot == null || !localRoot.isDirectory()) {
             return Result.error("hd-unmounted");
         }
-        File userDir = new File(localRoot, "USER");
-        if (!userDir.exists() && !userDir.mkdirs()) {
+        File userDir = resolveOrCreateLocalUser(localRoot);
+        if (userDir == null) {
             return Result.error("local-user");
         }
         purgePartFiles(userDir);
@@ -300,6 +300,18 @@ public final class PhotoSyncEngine {
         }
     }
 
+    private static File resolveOrCreateLocalUser(File localRoot) {
+        File upper = new File(localRoot, "USER");
+        File lower = new File(localRoot, "user");
+        if (upper.isDirectory()) return upper;
+        if (lower.isDirectory()) return lower;
+        if (upper.mkdirs()) return upper;
+        if (lower.mkdirs()) return lower;
+        Log.w(TAG, "cannot create local USER under " + localRoot
+                + " canWrite=" + localRoot.canWrite());
+        return null;
+    }
+
     private static boolean isPaused(BooleanSupplier pause) {
         try {
             return pause != null && pause.getAsBoolean();
@@ -327,13 +339,22 @@ public final class PhotoSyncEngine {
     }
 
     static int countLocalPhotos(File localRoot) {
-        File user = new File(localRoot, "USER");
+        File user = localUserDir(localRoot);
         return countPhotos(user);
     }
 
     static boolean hasIncomplete(File localRoot) {
         if (localRoot == null) return false;
-        return hasPartFiles(new File(localRoot, "USER"));
+        return hasPartFiles(localUserDir(localRoot));
+    }
+
+    private static File localUserDir(File localRoot) {
+        if (localRoot == null) return null;
+        File upper = new File(localRoot, "USER");
+        if (upper.isDirectory()) return upper;
+        File lower = new File(localRoot, "user");
+        if (lower.isDirectory()) return lower;
+        return upper;
     }
 
     static int purgePartFiles(File dir) {

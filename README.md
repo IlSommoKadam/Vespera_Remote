@@ -37,6 +37,8 @@ L'app mantiene una richiesta Wi-Fi generica e chiede al daemon root `tools/vespe
 | 0.6.17 | 64 | Popup sync: Nascondi / Chiudi+pausa cliccabili durante il trasferimento; copia tutti, poi verifica, poi cancella |
 | 0.6.18 | 65 | Due porte FTP: probe Vespera (telescopio) + server HD; proxy Tailscale sulla porta telescopio |
 | 0.6.19 | 66 | A sync conclusa: riepilogo Tutto OK / errori, cartelle, file e dimensioni (finestra resta aperta) |
+| 0.6.20 | 67 | Al riavvio app: ripresa automatica dei trasferimenti sospesi/in pausa |
+| 0.6.21 | 68 | Un solo daemon (init, niente secondo wrapper); restart senza smontare l’HD; bind ripristinato se manca; sync foto automatica 24h ogni 2 h |
 
 Il daemon deve essere avviato come root sul Pi dopo il boot; l'app comunica con esso tramite `net.req` / `disk.req` nella propria directory esterna.
 
@@ -45,11 +47,14 @@ Il daemon deve essere avviato come root sul Pi dopo il boot; l'app comunica con 
 Nella tab **Foto / HD**:
 
 1. Aggiorna dischi, seleziona l'HD, **Monta**. Dopo il primo montaggio l'app lo rimonta da sola all'avvio. Sono supportati **exFAT**, **FAT32** e **NTFS** (helper FUSE in `tools/ntfs`).
-2. In orario diurno (07:00–19:00, ora del Pi) copia la cartella `USER` del Vespera (`ftp://10.0.0.1/USER`) sull'HD, verifica numero e dimensione, poi cancella i file verificati sullo strumento. **Sincronizza ora** ignora la finestra oraria. Il progresso è una **finestra indipendente** (selezionabile): **Nascondi** lascia il trasferimento attivo, **Chiudi** lo mette in pausa. In Helper, **Continua** riapre la finestra e riprende.
+   A **reboot/spegnimento** ordinato Android esegue `sync` + smontaggio dell'HD (stato salvato → rimontaggio al boot successivo). Uno spegnimento brusco (stacco corrente) non garantisce lo smontaggio pulito.
+2. Tutto il giorno, ogni 2 h (intervallo modificabile), copia la cartella `USER` del Vespera (`ftp://10.0.0.1/USER`) sull'HD, verifica numero e dimensione, poi cancella i file verificati sullo strumento. **Sincronizza ora** parte subito. Il progresso è una **finestra indipendente** (selezionabile): **Nascondi** lascia il trasferimento attivo, **Chiudi** lo mette in pausa. In Helper, **Continua** riapre la finestra e riprende.
 3. Due porte FTP (anonymous, sola lettura), visibili nella tab Foto:
    - **Telescopio** (default **2122**): proxy verso l’FTP del Vespera (probe su 21/2121/2221/8021).
    - **Hard disk** (default **2121**): file sull’HD USB montato.
    Da remoto: `ftp://<IP-Tailscale>:2122` e `ftp://<IP-Tailscale>:2121`.
+
+Sulla **Home di Android** (non nelle tab Helper) c’è l’icona **Foto HD**: apre l’elenco delle cartelle/file sull’HD montato. Tocca una foto per scorrerle a schermo intero (swipe). Al primo avvio di Helper il sistema può chiedere di fissare la scorciatoia sulla Home.
 
 Serve il daemon aggiornato (`list-disks` / `mount-disk`) e, per NTFS, i binari in `tools/ntfs`. Dopo il deploy:
 

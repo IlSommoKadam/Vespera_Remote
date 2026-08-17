@@ -6,9 +6,7 @@
 #   - start-singularity: launch only if not running (no force-stop)
 #   - restart-singularity: force-stop + relaunch only when running but not connected to Vespera
 #   - keep VesperaHelper FGS alive after crash / force-stop / swipe-away (resume photo sync)
-#   - list-disks / mount-disk / umount-disk / disk-status  (USB HD for photo sync)
-
-#   - list-disks / mount-disk / umount-disk / disk-status  (USB HD for photo sync)
+#   - list-disks / mount-disk / umount-disk / disk-status / ensure-bind  (USB HD)
 #
 # Start once after boot (adb root):
 #   adb push tools/vespera-netd.sh /data/local/tmp/vespera-netd.sh
@@ -184,6 +182,57 @@ photos_dir() {
   else
     echo "$REQ_DIR/vespera-photos"
   fi
+}
+
+# True if path is a mountpoint (exact /proc/mounts field 2, plus sdcard pass-through).
+path_mounted() {
+  p="$1"
+  [ -n "$p" ] || return 1
+  awk -v p="$p" '$2 == p { found=1 } END { exit found ? 0 : 1 }' /proc/mounts && return 0
+  case "$p" in
+    /data/media/0/*)
+      alt="/mnt/pass_through/0/emulated/0/${p#/data/media/0/}"
+      awk -v p="$alt" '$2 == p { found=1 } END { exit found ? 0 : 1 }' /proc/mounts
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# Re-bind HD into the app-visible folder when /mnt/vespera-hd is up but the
+# bind vanished (daemon restart used to umount it; do not recreate USER on the
+# empty emulated dir — that looks mounted to the app).
+ensure_photos_bind() {
+  bind=$(photos_dir)
+  if [ -f "$HD_STATE" ]; then
+    state_bind=$(grep '^BIND=' "$HD_STATE" | cut -d= -f2)
+    state_mnt=$(grep '^MOUNT=' "$HD_STATE" | cut -d= -f2)
+    [ -n "$state_bind" ] && bind="$state_bind"
+    HD_REAL="$HD_MOUNT"
+    [ -n "$state_mnt" ] && HD_REAL="$state_mnt"
+  else
+    HD_REAL="$HD_MOUNT"
+  fi
+  mkdir -p "$bind" 2>/dev/null
+  if path_mounted "$bind"; then
+    mkdir -p "$bind/USER" 2>/dev/null
+    touch "$bind/.nomedia" 2>/dev/null
+    chmod 777 "$bind" "$bind/USER" 2>/dev/null
+    return 0
+  fi
+  if ! path_mounted "$HD_REAL"; then
+    return 1
+  fi
+  umount "$bind" 2>/dev/null
+  if mount --bind "$HD_REAL" "$bind"; then
+    chmod 777 "$bind" 2>/dev/null
+    mkdir -p "$bind/USER" 2>/dev/null
+    touch "$bind/.nomedia" 2>/dev/null
+    chmod 777 "$bind/USER" 2>/dev/null
+    echo "bind-restored $HD_REAL -> $bind $(date)" >&2
+    return 0
+  fi
+  echo "bind-fail $HD_REAL -> $bind $(date)" >&2
+  return 1
 }
 
 # /system/bin/blkid (e2fsprogs) hangs on NTFS. toybox blkid is enough.
@@ -408,11 +457,17 @@ mount_disk() {
   fi
 
   if [ "$target" != "$bind" ]; then
-    mount --bind "$target" "$bind" 2>/dev/null
+    umount "$bind" 2>/dev/null
+    if ! mount --bind "$target" "$bind"; then
+      write_mount_ack "mount-bind-fail $dev $bind"
+      write_ack "mount-bind-fail $dev $bind"
+      return 1
+    fi
     chmod 777 "$bind" 2>/dev/null
   fi
   mkdir -p "$bind/USER" 2>/dev/null
   touch "$bind/.nomedia" 2>/dev/null
+  chmod 777 "$bind" "$bind/USER" 2>/dev/null
   [ -z "$uuid" ] && uuid="-"
   [ -z "$label" ] && label="-"
   save_hd_state "$dev" "$uuid" "$label" "$target" "$bind" "$owned"
@@ -494,6 +549,27 @@ umount_all_of() {
   done
 }
 
+# Flush and unmount HD without clearing HD_STATE (so next boot can remount).
+shutdown_umount_hd() {
+  bind=$(photos_dir)
+  state_mnt=""
+  dev=""
+  if [ -f "$HD_STATE" ]; then
+    state_bind=$(grep '^BIND=' "$HD_STATE" | cut -d= -f2)
+    state_mnt=$(grep '^MOUNT=' "$HD_STATE" | cut -d= -f2)
+    dev=$(grep '^DEV=' "$HD_STATE" | cut -d= -f2)
+    [ -n "$state_bind" ] && bind="$state_bind"
+  fi
+  sync
+  umount "$bind" 2>/dev/null || umount -l "$bind" 2>/dev/null
+  umount "$HD_MOUNT" 2>/dev/null || umount -l "$HD_MOUNT" 2>/dev/null
+  [ -n "$state_mnt" ] && { umount "$state_mnt" 2>/dev/null || umount -l "$state_mnt" 2>/dev/null; }
+  umount_all_of "$dev"
+  sync
+  write_mount_ack "unmounted"
+  write_ack "shutdown-umount-ok $(date)"
+}
+
 umount_disk() {
   spec="$1"
   bind=$(photos_dir)
@@ -508,10 +584,12 @@ umount_disk() {
   if [ -z "$dev" ] && [ -n "$spec" ]; then
     dev=$(resolve_block_dev "$spec")
   fi
+  sync
   umount "$bind" 2>/dev/null || umount -l "$bind" 2>/dev/null
   umount "$HD_MOUNT" 2>/dev/null || umount -l "$HD_MOUNT" 2>/dev/null
   [ -n "$state_mnt" ] && umount "$state_mnt" 2>/dev/null
   umount_all_of "$dev"
+  sync
   clear_hd_state
   write_mount_ack "unmounted"
   write_ack "umount-ok $(date)"
@@ -569,14 +647,19 @@ disk_status() {
     mnt=$(grep '^MOUNT=' "$HD_STATE" | cut -d= -f2)
     bind_path=$(grep '^BIND=' "$HD_STATE" | cut -d= -f2)
     [ -n "$bind_path" ] && bind="$bind_path"
-    if is_mounted_dev "$dev" || grep -q " $bind " /proc/mounts 2>/dev/null \
-        || grep -q " $mnt " /proc/mounts 2>/dev/null; then
+    if is_mounted_dev "$dev" || path_mounted "$mnt" || path_mounted "$HD_MOUNT"; then
+      ensure_photos_bind || true
+    fi
+    if path_mounted "$bind"; then
       write_mount_ack "mounted|$uuid|$label|$dev|$bind"
       write_ack "disk-mounted $dev"
       return 0
     fi
   fi
-  if grep -q " $bind " /proc/mounts 2>/dev/null || grep -q " $HD_MOUNT " /proc/mounts 2>/dev/null; then
+  if path_mounted "$HD_MOUNT"; then
+    ensure_photos_bind || true
+  fi
+  if path_mounted "$bind"; then
     write_mount_ack "mounted|-|-|-|$bind"
     write_ack "disk-mounted bind"
     return 0
@@ -595,11 +678,13 @@ auto_mount_from_state() {
   fi
   [ -z "$spec" ] && return 0
   if [ -n "$dev" ] && is_mounted_dev "$dev"; then
+    ensure_photos_bind || true
     disk_status
     return 0
   fi
   bind=$(photos_dir)
-  if grep -q " $bind " /proc/mounts 2>/dev/null || grep -q " $HD_MOUNT " /proc/mounts 2>/dev/null; then
+  if path_mounted "$bind" || path_mounted "$HD_MOUNT"; then
+    ensure_photos_bind || true
     disk_status
     return 0
   fi
@@ -633,8 +718,10 @@ handle_cmd() {
     mount-disk) mount_disk "$a" ;;
     umount-disk) umount_disk "$a" ;;
     eject-disk) eject_disk "$a" ;;
+    ensure-bind) ensure_photos_bind; disk_status ;;
     disk-status) disk_status ;;
     auto-mount) auto_mount_from_state ;;
+    shutdown-umount) shutdown_umount_hd ;;
     *) write_ack "unknown:$line" ;;
   esac
 }
@@ -706,6 +793,13 @@ consume_req() {
   handle_cmd "$line"
   return 0
 }
+
+# TERM is used when reloading the daemon. Never umount the HD here.
+on_term() {
+  echo "vespera-netd stopping $(date)" >&2
+  exit 0
+}
+trap on_term TERM INT
 
 WATCH=0
 while true; do

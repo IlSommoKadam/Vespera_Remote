@@ -18,7 +18,7 @@ import android.widget.TextView;
 
 import java.util.List;
 
-/** Builds and refreshes the Foto tab (USB HD + daytime FTP sync). */
+/** Builds and refreshes the Foto tab (USB HD + all-day FTP sync). */
 final class PhotoPanel {
     private static final int COLOR_OFFLINE = UiStyle.STEEL;
     private static final int COLOR_DETECTED = UiStyle.AMBER;
@@ -38,6 +38,7 @@ final class PhotoPanel {
     private final Button mount;
     private final Button unmount;
     private final Button eject;
+    private final TextView ejectSafe;
     private final TextView syncWindow;
     private final EditText intervalInput;
     private final Button applyInterval;
@@ -51,6 +52,8 @@ final class PhotoPanel {
     private boolean receiverRegistered;
     private String selectedId = "";
     private boolean mounted;
+    private boolean ejected;
+    private int listedCount;
     private String lastMessage = "";
 
     PhotoPanel(Activity activity, float density, int padding) {
@@ -100,6 +103,11 @@ final class PhotoPanel {
                 new Intent(activity, PhotoSyncService.class)
                         .setAction(PhotoSyncService.ACTION_EJECT)
                         .putExtra(PhotoSyncService.EXTRA_DISK_ID, selectedId)));
+        ejectSafe = body(activity.getString(R.string.photo_hd_safe_to_remove));
+        ejectSafe.setTypeface(ejectSafe.getTypeface(), android.graphics.Typeface.BOLD);
+        ejectSafe.setTextColor(COLOR_CONNECTED);
+        ejectSafe.setTextSize(15);
+        ejectSafe.setVisibility(View.GONE);
 
         diskList = new LinearLayout(activity);
         diskList.setOrientation(LinearLayout.VERTICAL);
@@ -163,6 +171,7 @@ final class PhotoPanel {
         layout.addView(mount);
         layout.addView(unmount);
         layout.addView(eject);
+        layout.addView(ejectSafe);
         layout.addView(diskList);
         layout.addView(syncTitle);
         layout.addView(syncWindow);
@@ -215,6 +224,7 @@ final class PhotoPanel {
             String selected = intent.getStringExtra(PhotoSyncService.EXTRA_SELECTED);
             String msg = intent.getStringExtra(PhotoSyncService.EXTRA_MESSAGE);
             mounted = intent.getBooleanExtra(PhotoSyncService.EXTRA_MOUNTED, false);
+            ejected = intent.getBooleanExtra(PhotoSyncService.EXTRA_EJECTED, false);
             if (msg != null) lastMessage = msg;
             if (hd != null) hdStatus.setText(hd);
             if (!mounted && lastMessage != null && !lastMessage.isEmpty()) {
@@ -244,6 +254,7 @@ final class PhotoPanel {
     };
 
     private void bindDisks(List<UsbDisk> disks) {
+        listedCount = disks.size();
         diskList.removeAllViews();
         if (disks.isEmpty()) {
             TextView empty = body(lastMessage != null && !lastMessage.isEmpty()
@@ -282,18 +293,26 @@ final class PhotoPanel {
     }
 
     private void refreshMountButtons() {
-        boolean hasDisk = selectedId != null && !selectedId.isEmpty();
+        boolean hasSelection = selectedId != null && !selectedId.isEmpty();
+        boolean hasListed = listedCount > 0;
         if (mounted) {
             mount.setVisibility(View.GONE);
             unmount.setVisibility(View.VISIBLE);
         } else {
             unmount.setVisibility(View.GONE);
             mount.setVisibility(View.VISIBLE);
-            mount.setEnabled(hasDisk);
-            UiStyle.applyRaised(mount, hasDisk ? COLOR_CONNECTED : COLOR_OFFLINE, hasDisk);
+            boolean canMount = hasListed && hasSelection;
+            mount.setEnabled(canMount);
+            UiStyle.applyRaised(mount, canMount ? COLOR_CONNECTED : COLOR_OFFLINE, canMount);
         }
-        eject.setEnabled(hasDisk || mounted);
-        UiStyle.applyRaised(eject, (hasDisk || mounted) ? UiStyle.TERRACOTTA : COLOR_OFFLINE, hasDisk || mounted);
+        boolean showSafe = ejected && !mounted;
+        eject.setVisibility(showSafe ? View.GONE : View.VISIBLE);
+        ejectSafe.setVisibility(showSafe ? View.VISIBLE : View.GONE);
+        if (!showSafe) {
+            boolean canEject = mounted || hasListed;
+            eject.setEnabled(canEject);
+            UiStyle.applyRaised(eject, canEject ? UiStyle.TERRACOTTA : COLOR_OFFLINE, canEject);
+        }
     }
 
     private void refreshOverlayRow() {
@@ -323,8 +342,7 @@ final class PhotoPanel {
 
     private String windowText() {
         return activity.getString(R.string.photo_sync_interval_help,
-                PhotoSyncStore.formatIntervalHours(syncStore.intervalHours()),
-                syncStore.dayStartHour(), syncStore.dayEndHour());
+                PhotoSyncStore.formatIntervalHours(syncStore.intervalHours()));
     }
 
     private String savedText() {

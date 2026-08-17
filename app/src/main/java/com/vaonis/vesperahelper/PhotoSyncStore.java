@@ -4,20 +4,15 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import java.io.File;
-import java.util.Calendar;
 import java.util.Locale;
 
-/** Last photo-sync run, daytime window and daytime interval. */
+/** Last photo-sync run and all-day automatic interval. */
 final class PhotoSyncStore {
-    static final int DEFAULT_DAY_START = 7;
-    static final int DEFAULT_DAY_END = 19;
     static final float DEFAULT_INTERVAL_HOURS = 2f;
     static final float MIN_INTERVAL_HOURS = 0.25f;
     static final float MAX_INTERVAL_HOURS = 12f;
 
     private static final String PREFS = "vespera_photo_sync";
-    private static final String KEY_START = "day_start_hour";
-    private static final String KEY_END = "day_end_hour";
     private static final String KEY_INTERVAL_HOURS = "interval_hours";
     private static final String KEY_LAST_AT = "last_at";
     private static final String KEY_LAST_ATTEMPT = "last_attempt_at";
@@ -42,9 +37,6 @@ final class PhotoSyncStore {
         return new PhotoSyncStore(
                 context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE));
     }
-
-    int dayStartHour() { return prefs.getInt(KEY_START, DEFAULT_DAY_START); }
-    int dayEndHour() { return prefs.getInt(KEY_END, DEFAULT_DAY_END); }
 
     float intervalHours() {
         float hours = prefs.getFloat(KEY_INTERVAL_HOURS, DEFAULT_INTERVAL_HOURS);
@@ -91,39 +83,16 @@ final class PhotoSyncStore {
         prefs.edit().putLong(KEY_LAST_ATTEMPT, System.currentTimeMillis()).commit();
     }
 
-    boolean isDaytime(long nowMs) {
-        Calendar calendar = Calendar.getInstance();
-        calendar.setTimeInMillis(nowMs);
-        int hour = calendar.get(Calendar.HOUR_OF_DAY);
-        return hour >= dayStartHour() && hour < dayEndHour();
-    }
-
     long nextAutoAt(long nowMs) {
         long last = Math.max(lastAt(), lastAttemptAt());
         long candidate = last <= 0 ? nowMs : last + intervalMs();
         if (candidate < nowMs) candidate = nowMs;
-        return alignToDaytime(candidate);
+        return candidate;
     }
 
     boolean isAutoDue(long nowMs) {
         if (paused()) return false;
-        if (!isDaytime(nowMs)) return false;
         return nowMs >= nextAutoAt(nowMs);
-    }
-
-    long alignToDaytime(long timeMs) {
-        Calendar calendar = Calendar.getInstance();
-        calendar.setTimeInMillis(timeMs);
-        int hour = calendar.get(Calendar.HOUR_OF_DAY);
-        int start = dayStartHour();
-        int end = dayEndHour();
-        if (hour >= start && hour < end) return timeMs;
-        if (hour >= end) calendar.add(Calendar.DAY_OF_YEAR, 1);
-        calendar.set(Calendar.HOUR_OF_DAY, start);
-        calendar.set(Calendar.MINUTE, 0);
-        calendar.set(Calendar.SECOND, 0);
-        calendar.set(Calendar.MILLISECOND, 0);
-        return calendar.getTimeInMillis();
     }
 
     long lastAt() { return prefs.getLong(KEY_LAST_AT, 0); }
@@ -139,9 +108,25 @@ final class PhotoSyncStore {
 
     boolean shouldResume(Context context) {
         if (paused()) return false;
-        if (inProgress()) return true;
+        return hasSuspendedWork(context);
+    }
+
+    /**
+     * True if a sync was left unfinished (crash, kill, pause, or leftover
+     * {@code .part} files). Used on app/service restart to auto-continue.
+     */
+    boolean hasSuspendedWork(Context context) {
+        if (inProgress() || paused()) return true;
         File marker = markerFile(context);
-        return marker != null && marker.isFile();
+        if (marker != null && marker.isFile()) return true;
+        File root = DaemonDisk.photosDir(context);
+        return PhotoSyncEngine.hasIncomplete(root);
+    }
+
+    /** Clear the user-pause flag so a restart can auto-resume suspended work. */
+    void clearPauseForAutoResume() {
+        if (!paused()) return;
+        prefs.edit().putBoolean(KEY_PAUSED, false).commit();
     }
 
     void setPaused(boolean paused) {
