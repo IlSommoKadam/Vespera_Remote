@@ -1,0 +1,11 @@
+# Autostart Tailscale after Android boot on this Raspberry Pi image.
+service tailscale_autostart /system/bin/sh /system/bin/tailscale-autostart.sh
+    class late_start
+    user root
+    group root inet
+    seclabel u:r:su:s0
+    oneshot
+    disabled
+
+on property:sys.boot_completed=1
+    start tailscale_autostart

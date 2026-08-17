@@ -8,7 +8,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <queries>
         <package android:name="com.vaonis.barnard" />
@@ -17,12 +20,30 @@
     <application
         android:allowBackup="false"
         android:icon="@drawable/vespera_launcher_icon"
-        android:label="Vespera Wi-Fi Helper"
-        android:theme="@style/AppTheme">
+        android:label="@string/app_name"
+        android:theme="@style/AppTheme"
+        android:name=".VesperaHelperApp"
+        android:usesCleartextTraffic="true">
         <service
             android:name=".VesperaConnectionService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice"
+            android:stopWithTask="false" />
+        <service
+            android:name=".PhotoSyncService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -31,5 +52,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".SyncProgressActivity"
+            android:allowTaskReparenting="false"
+            android:excludeFromRecents="false"
+            android:exported="false"
+            android:finishOnTaskLaunch="false"
+            android:launchMode="singleInstance"
+            android:resizeableActivity="true"
+            android:showWhenLocked="true"
+            android:taskAffinity="com.vaonis.vesperahelper.syncpopup"
+            android:theme="@style/SyncPopupTheme"
+            android:turnScreenOn="true" />
     </application>
 </manifest>

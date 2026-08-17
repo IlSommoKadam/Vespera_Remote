@@ -1,4 +1,4 @@
-package com.vaonis.vesperawifihelper;
+package com.vaonis.vesperahelper;
 
 import android.content.Context;
 import android.util.Log;
@@ -16,7 +16,7 @@ final class SingularityDetector {
     static final String ACK_FILE = "singularity.ack";
     private static final String CHECK_CMD = "check-singularity";
     private static final long POLL_MS = 200;
-    private static final long TIMEOUT_MS = 3_500;
+    private static final long TIMEOUT_MS = 10_000;
 
     enum Status {
         CONNECTED,
@@ -50,16 +50,34 @@ final class SingularityDetector {
             return new Result(Status.UNKNOWN, "no-files-dir");
         }
         File ack = new File(dir, ACK_FILE);
-        long before = ack.exists() ? ack.lastModified() : 0;
-        if (!VesperaConnectionService.writeNetRequest(context, CHECK_CMD)) {
+        ensureWritableAck(ack);
+        String previous = ack.exists() ? readFirstLine(ack) : null;
+        long before = ack.exists() ? ack.lastModified() : 0L;
+        if (!VesperaConnectionService.writeSingularityRequest(context, CHECK_CMD)) {
             return new Result(Status.DAEMON_MISSING, "net-req-write-failed");
         }
-        String line = pollAck(ack, before);
+        String line = pollAck(ack, before, previous);
         if (line == null || line.isEmpty()) {
             return new Result(Status.DAEMON_MISSING, "no-daemon-ack");
         }
         Log.i(TAG, "ack=" + line);
         return parse(line);
+    }
+
+    /** Keep an app-owned ack inode so the root daemon can truncate in place. */
+    private static void ensureWritableAck(File ack) {
+        try {
+            if (!ack.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                ack.createNewFile();
+            }
+            //noinspection ResultOfMethodCallIgnored
+            ack.setReadable(true, false);
+            //noinspection ResultOfMethodCallIgnored
+            ack.setWritable(true, false);
+        } catch (Exception ignored) {
+            // Daemon publish_file remains the fallback.
+        }
     }
 
     private static Result parse(String line) {
@@ -83,16 +101,22 @@ final class SingularityDetector {
         return new Result(Status.UNKNOWN, line);
     }
 
-    private static String pollAck(File ack, long modifiedAfter) {
+    private static String pollAck(File ack, long modifiedAfter, String previousLine) {
         long deadline = System.currentTimeMillis() + TIMEOUT_MS;
         while (System.currentTimeMillis() < deadline) {
-            if (ack.exists() && ack.lastModified() > modifiedAfter) {
-                return readFirstLine(ack);
+            if (ack.exists()) {
+                String line = readFirstLine(ack);
+                if (line != null && !line.isEmpty()) {
+                    long modified = ack.lastModified();
+                    boolean freshMtime = modified > modifiedAfter;
+                    boolean replaced = previousLine == null || !line.equals(previousLine);
+                    // FUSE often has 1s mtime resolution: accept content change too.
+                    if (freshMtime || replaced) {
+                        return line;
+                    }
+                }
             }
             sleepQuietly(POLL_MS);
-        }
-        if (ack.exists()) {
-            return readFirstLine(ack);
         }
         return null;
     }

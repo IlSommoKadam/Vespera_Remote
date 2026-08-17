@@ -1,4 +1,4 @@
-package com.vaonis.vesperawifihelper;
+package com.vaonis.vesperahelper;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -32,10 +32,10 @@ import java.util.concurrent.Executors;
  * so {@code 10.0.0.0/24} goes via {@code wlan0} without a VPN.
  */
 public final class VesperaConnectionService extends Service {
-    public static final String ACTION_CONNECT = "com.vaonis.vesperawifihelper.CONNECT";
-    public static final String ACTION_DISCONNECT = "com.vaonis.vesperawifihelper.DISCONNECT";
-    public static final String ACTION_REFRESH = "com.vaonis.vesperawifihelper.REFRESH";
-    public static final String ACTION_STATUS = "com.vaonis.vesperawifihelper.STATUS";
+    public static final String ACTION_CONNECT = "com.vaonis.vesperahelper.CONNECT";
+    public static final String ACTION_DISCONNECT = "com.vaonis.vesperahelper.DISCONNECT";
+    public static final String ACTION_REFRESH = "com.vaonis.vesperahelper.REFRESH";
+    public static final String ACTION_STATUS = "com.vaonis.vesperahelper.STATUS";
     public static final String EXTRA_STATUS = "status";
 
     public static final String STATUS_DISCONNECTED = "DISCONNECTED";
@@ -49,6 +49,11 @@ public final class VesperaConnectionService extends Service {
     private static final String TAG = "VesperaConn";
     private static final int NOTIFICATION_ID = 42;
     private static final String NET_REQ = "net.req";
+    private static final String SINGULARITY_REQ = "singularity.req";
+    private static final String DISK_REQ = "disk.req";
+    private static final String PROBE_REQ = "probe.req";
+
+    private static final long SINGULARITY_START_DELAY_MS = 3_000;
 
     private static volatile Network activeNetwork;
     private static volatile String lastStatus = STATUS_DISCONNECTED;
@@ -56,6 +61,7 @@ public final class VesperaConnectionService extends Service {
     private ConnectivityManager.NetworkCallback holdCallback;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final Runnable startSingularityAfterConnect = this::startSingularityAfterConnect;
     private String targetSsid;
     private String targetBssid;
 
@@ -73,13 +79,17 @@ public final class VesperaConnectionService extends Service {
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
     }
 
+    private boolean stopRequested;
+
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? null : intent.getAction();
         if (ACTION_DISCONNECT.equals(action)) {
+            stopRequested = true;
             stopConnection();
             stopSelf();
             return START_NOT_STICKY;
         }
+        stopRequested = false;
         if (ACTION_REFRESH.equals(action)) {
             findConnectedVespera();
             return START_NOT_STICKY;
@@ -88,7 +98,7 @@ public final class VesperaConnectionService extends Service {
         startForeground(NOTIFICATION_ID,
                 notification(localized.getString(R.string.conn_notification_connecting)));
         if (holdCallback == null) connect();
-        return START_NOT_STICKY;
+        return START_STICKY;
     }
 
     private Notification notification(String text) {
@@ -144,9 +154,12 @@ public final class VesperaConnectionService extends Service {
                 if (isTargetVesperaWifi(network)) adopt(network);
             }
         };
+        // Match any Wi‑Fi (with or without INTERNET). Excluding INTERNET made
+        // Android refuse bindSocket (EPERM) when the AP was still marked as
+        // having internet, because the Network came from getAllNetworks()
+        // rather than a matching requestNetwork callback.
         NetworkRequest hold = new NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build();
         connectivity.requestNetwork(hold, holdCallback);
     }
@@ -157,6 +170,17 @@ public final class VesperaConnectionService extends Service {
         Log.i(TAG, "daemon promote request written=" + written);
     }
 
+    /** Re-associate system Wi‑Fi to the saved Vespera and refresh the wlan route. */
+    public static void requestDaemonPromote(Context context) {
+        VesperaDeviceStore device = VesperaDeviceStore.from(context);
+        if (!device.isConfigured()) {
+            Log.w(TAG, "daemon promote skipped: no saved device");
+            return;
+        }
+        writeNetRequestStatic(context,
+                "promote|" + device.getSsid() + "|" + device.getBssid());
+    }
+
     /** Ask daemon to refresh 10.0.0.0/24 → wlan0 rule (no VPN). */
     public static void requestDaemonRoute(Context context) {
         writeNetRequestStatic(context, "route");
@@ -164,12 +188,32 @@ public final class VesperaConnectionService extends Service {
 
     /** Ask rooted daemon to force-stop Singularity (requires {@code vespera-netd.sh}). */
     public static void requestSingularityRestart(Context context) {
-        writeNetRequest(context, "restart-singularity");
+        writeSingularityRequest(context, "restart-singularity");
+    }
+
+    /** Ask daemon to launch Singularity if it is not already running. */
+    public static void requestSingularityStart(Context context) {
+        writeSingularityRequest(context, "start-singularity");
     }
 
     /** Ask daemon to probe whether Singularity sees the Vespera instrument. */
     public static boolean writeNetRequest(Context context, String line) {
         return writeNetRequestStatic(context, line);
+    }
+
+    /** Dedicated request file so route/promote cannot overwrite a pending Singularity check. */
+    public static boolean writeSingularityRequest(Context context, String line) {
+        return writeRequestFile(context, SINGULARITY_REQ, line);
+    }
+
+    /** Dedicated request file so route/promote/check-singularity cannot overwrite disk ops. */
+    public static boolean writeDiskRequest(Context context, String line) {
+        return writeRequestFile(context, DISK_REQ, line);
+    }
+
+    /** Dedicated request so route/promote cannot steal API port discovery. */
+    public static boolean writeProbeRequest(Context context, String line) {
+        return writeRequestFile(context, PROBE_REQ, line);
     }
 
     /** Re-scan active networks and adopt the saved Vespera if present. */
@@ -184,11 +228,20 @@ public final class VesperaConnectionService extends Service {
     }
 
     private static boolean writeNetRequestStatic(Context context, String line) {
+        return writeRequestFile(context, NET_REQ, line);
+    }
+
+    private static boolean writeRequestFile(Context context, String fileName, String line) {
         try {
             File dir = context.getExternalFilesDir(null);
             if (dir == null) dir = context.getFilesDir();
             if (!dir.exists() && !dir.mkdirs()) return false;
-            File req = new File(dir, NET_REQ);
+            File req = new File(dir, fileName);
+            // Root/adb may leave an unwritable inode; replace it.
+            if (req.exists() && !req.canWrite()) {
+                //noinspection ResultOfMethodCallIgnored
+                req.delete();
+            }
             try (OutputStreamWriter writer = new OutputStreamWriter(
                     new FileOutputStream(req, false), StandardCharsets.UTF_8)) {
                 writer.write(line);
@@ -197,10 +250,12 @@ public final class VesperaConnectionService extends Service {
             // World-readable so the root daemon can consume it.
             //noinspection ResultOfMethodCallIgnored
             req.setReadable(true, false);
+            //noinspection ResultOfMethodCallIgnored
+            req.setWritable(true, false);
             Log.i(TAG, "wrote " + req.getAbsolutePath() + " => " + line);
             return true;
         } catch (Exception failure) {
-            Log.w(TAG, "writeNetRequest failed", failure);
+            Log.w(TAG, "writeRequestFile failed (" + fileName + ")", failure);
             return false;
         }
     }
@@ -264,7 +319,15 @@ public final class VesperaConnectionService extends Service {
         return ssid;
     }
 
+    private void startSingularityAfterConnect() {
+        if (!STATUS_CONNECTED.equals(lastStatus)) return;
+        Log.i(TAG, "starting Singularity after Vespera connect (background)");
+        // Daemon starts Singularity then restores VesperaHelper to the foreground.
+        requestSingularityStart(this);
+    }
+
     private void stopConnection() {
+        mainHandler.removeCallbacks(startSingularityAfterConnect);
         mainHandler.removeCallbacksAndMessages(null);
         if (holdCallback != null) {
             try { connectivity.unregisterNetworkCallback(holdCallback); } catch (RuntimeException ignored) {}
@@ -276,12 +339,32 @@ public final class VesperaConnectionService extends Service {
     }
 
     private void update(String status) {
+        boolean becameConnected = STATUS_CONNECTED.equals(status)
+                && !STATUS_CONNECTED.equals(lastStatus);
         lastStatus = status;
         Context localized = AppLocale.wrap(this);
         String text = StatusTexts.connection(localized, status);
         sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName())
                 .putExtra(EXTRA_STATUS, status));
         getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification(text));
+        if (becameConnected) {
+            mainHandler.removeCallbacks(startSingularityAfterConnect);
+            mainHandler.postDelayed(startSingularityAfterConnect, SINGULARITY_START_DELAY_MS);
+        } else if (!STATUS_CONNECTED.equals(status)
+                && !status.startsWith(STATUS_REQUESTING)) {
+            mainHandler.removeCallbacks(startSingularityAfterConnect);
+        }
+    }
+
+    @Override public void onTaskRemoved(Intent rootIntent) {
+        if (!stopRequested && VesperaDeviceStore.from(this).isConfigured()) {
+            try {
+                startForegroundService(new Intent(this, VesperaConnectionService.class)
+                        .setAction(ACTION_CONNECT));
+            } catch (Exception ignored) {
+            }
+        }
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override public void onDestroy() {

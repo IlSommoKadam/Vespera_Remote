@@ -1,0 +1,11 @@
+Android arm64 NTFS helper used by vespera-netd.sh
+
+Files:
+  mount.ntfs     ntfs-3g FUSE driver
+  libfuse.so
+  libntfs-3g.so
+
+Source: Magisk-Modules-Repo/vold-posix (LineageOS android_external_ntfs-3g 2017.3.23)
+License: GPL-2.0 / LGPL-2.0 (Tuxera ntfs-3g)
+
+On the Pi they live in /data/local/tmp/ntfs/ (pushed next to the daemon).

@@ -3,14 +3,18 @@ plugins {
 }
 
 android {
-    namespace 'com.vaonis.vesperawifihelper'
+    namespace 'com.vaonis.vesperahelper'
     compileSdk 35
 
     defaultConfig {
-        applicationId 'com.vaonis.vesperawifihelper'
+        applicationId 'com.vaonis.vesperahelper'
         minSdk 29
         targetSdk 35
-        versionCode 43
-        versionName '0.5.2'
+        versionCode 66
+        versionName '0.6.19'
     }
+}
+
+dependencies {
+    implementation 'commons-net:commons-net:3.11.1'
 }

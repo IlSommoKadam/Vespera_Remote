@@ -1,0 +1,188 @@
+package com.vaonis.vesperahelper;
+
+import android.content.Context;
+import android.os.SystemClock;
+import android.util.Log;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+
+/** Talks to {@code vespera-netd.sh} for USB disk list / mount / unmount. */
+public final class DaemonDisk {
+    private static final String TAG = "VesperaDisk";
+    static final String DISKS_ACK = "disks.ack";
+    static final String MOUNT_ACK = "mount.ack";
+    private static final long LIST_TIMEOUT_MS = 10_000;
+    private static final long MOUNT_TIMEOUT_MS = 15_000;
+
+    public static final class MountStatus {
+        public final boolean mounted;
+        public final String uuid;
+        public final String label;
+        public final String device;
+        public final String path;
+        public final String raw;
+        public final boolean timeout;
+
+        MountStatus(boolean mounted, String uuid, String label, String device, String path,
+                    String raw, boolean timeout) {
+            this.mounted = mounted;
+            this.uuid = uuid == null ? "-" : uuid;
+            this.label = label == null ? "-" : label;
+            this.device = device == null ? "-" : device;
+            this.path = path == null ? "" : path;
+            this.raw = raw == null ? "" : raw;
+            this.timeout = timeout;
+        }
+
+        static MountStatus unmounted(String raw) {
+            return new MountStatus(false, "-", "-", "-", "", raw, false);
+        }
+
+        static MountStatus timeout() {
+            return new MountStatus(false, "-", "-", "-", "", "", true);
+        }
+    }
+
+    private DaemonDisk() {}
+
+    public static File photosDir(Context context) {
+        File emulatedParent = context.getExternalFilesDir(null);
+        File emulated = emulatedParent == null ? null : new File(emulatedParent, "vespera-photos");
+        File media = new File("/data/media/0/Android/data/com.vaonis.vesperahelper/files/vespera-photos");
+        File sdcard = new File("/sdcard/Android/data/com.vaonis.vesperahelper/files/vespera-photos");
+        File[] candidates = new File[] { emulated, media, sdcard };
+        File fallback = emulated != null ? emulated : media;
+        for (File candidate : candidates) {
+            if (looksLikeMountedPhotos(candidate)) return candidate;
+        }
+        for (File candidate : candidates) {
+            if (candidate != null && candidate.isDirectory()) return candidate;
+        }
+        return fallback;
+    }
+
+    private static boolean looksLikeMountedPhotos(File dir) {
+        if (dir == null || !dir.isDirectory()) return false;
+        File user = new File(dir, "USER");
+        File nomedia = new File(dir, ".nomedia");
+        return user.isDirectory() || nomedia.isFile();
+    }
+
+    public static List<UsbDisk> listDisks(Context context) {
+        String ack = request(context, "list-disks", DISKS_ACK, LIST_TIMEOUT_MS);
+        return UsbDisk.parseList(ack);
+    }
+
+    public static String listRaw(Context context) {
+        return request(context, "list-disks", DISKS_ACK, LIST_TIMEOUT_MS);
+    }
+
+    public static MountStatus mount(Context context, String spec) {
+        if (spec == null || spec.trim().isEmpty()) {
+            return MountStatus.unmounted("mount-bad-args");
+        }
+        String ack = request(context, "mount-disk|" + spec.trim(), MOUNT_ACK, MOUNT_TIMEOUT_MS);
+        return parseMount(ack);
+    }
+
+    public static MountStatus unmount(Context context) {
+        return unmount(context, null);
+    }
+
+    public static MountStatus unmount(Context context, String spec) {
+        String cmd = (spec == null || spec.trim().isEmpty())
+                ? "umount-disk" : "umount-disk|" + spec.trim();
+        String ack = request(context, cmd, MOUNT_ACK, MOUNT_TIMEOUT_MS);
+        return parseMount(ack);
+    }
+
+    public static MountStatus eject(Context context, String spec) {
+        String cmd = (spec == null || spec.trim().isEmpty())
+                ? "eject-disk" : "eject-disk|" + spec.trim();
+        String ack = request(context, cmd, MOUNT_ACK, MOUNT_TIMEOUT_MS);
+        return parseMount(ack);
+    }
+
+    public static MountStatus status(Context context) {
+        String ack = request(context, "disk-status", MOUNT_ACK, LIST_TIMEOUT_MS);
+        return parseMount(ack);
+    }
+
+    public static MountStatus parseMount(String ack) {
+        if (ack == null) return MountStatus.timeout();
+        String line = firstLine(ack);
+        if (line.startsWith("mounted|")) {
+            String[] p = line.split("\\|", -1);
+            return new MountStatus(true,
+                    p.length > 1 ? p[1] : "-",
+                    p.length > 2 ? p[2] : "-",
+                    p.length > 3 ? p[3] : "-",
+                    p.length > 4 ? p[4] : "",
+                    line, false);
+        }
+        if (line.startsWith("ejected|")) {
+            String[] p = line.split("\\|", -1);
+            return new MountStatus(false, "-", "-", p.length > 1 ? p[1] : "-", "", line, false);
+        }
+        if (line.startsWith("mount-unsupported-ntfs")) {
+            return new MountStatus(false, "-", "-", "-", "", line, false);
+        }
+        if (line.isEmpty()) return MountStatus.timeout();
+        return new MountStatus(false, "-", "-", "-", "", line, false);
+    }
+
+    private static String request(Context context, String command, String ackName, long timeoutMs) {
+        File dir = context.getExternalFilesDir(null);
+        if (dir == null) dir = context.getFilesDir();
+        File ack = new File(dir, ackName);
+        if (ack.exists() && !ack.delete()) {
+            Log.w(TAG, "could not clear " + ackName);
+        }
+        boolean written = VesperaConnectionService.writeDiskRequest(context, command);
+        if (!written) {
+            Log.w(TAG, "failed to write " + command);
+            return null;
+        }
+        long start = SystemClock.elapsedRealtime();
+        while (SystemClock.elapsedRealtime() - start < timeoutMs) {
+            if (ack.exists() && ack.length() > 0) {
+                try {
+                    Thread.sleep(80);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return readQuietly(ack);
+                }
+                return readQuietly(ack);
+            }
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+        Log.w(TAG, "timeout waiting for " + ackName + " after " + command);
+        return null;
+    }
+
+    private static String readQuietly(File file) {
+        try (FileInputStream in = new FileInputStream(file)) {
+            byte[] buf = new byte[(int) Math.min(file.length(), 32_768)];
+            int n = in.read(buf);
+            if (n <= 0) return "";
+            return new String(buf, 0, n, StandardCharsets.UTF_8);
+        } catch (IOException ignored) {
+            return "";
+        }
+    }
+
+    private static String firstLine(String ack) {
+        int nl = ack.indexOf('\n');
+        String line = nl < 0 ? ack : ack.substring(0, nl);
+        return line.replace("\r", "").trim();
+    }
+}

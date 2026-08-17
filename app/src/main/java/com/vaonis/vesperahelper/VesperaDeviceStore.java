@@ -1,4 +1,4 @@
-package com.vaonis.vesperawifihelper;
+package com.vaonis.vesperahelper;
 
 import android.content.Context;
 import android.content.SharedPreferences;

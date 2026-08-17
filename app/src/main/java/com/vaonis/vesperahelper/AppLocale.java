@@ -1,4 +1,4 @@
-package com.vaonis.vesperawifihelper;
+package com.vaonis.vesperahelper;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -34,8 +34,15 @@ public final class AppLocale {
 
     public static Context apply(Context context, String language) {
         Locale locale = localeFor(language);
+        Configuration current = context.getResources().getConfiguration();
+        Locale currentLocale = current.getLocales().isEmpty()
+                ? Locale.getDefault()
+                : current.getLocales().get(0);
+        if (locale.getLanguage().equals(currentLocale.getLanguage())) {
+            return context;
+        }
         Locale.setDefault(locale);
-        Configuration config = new Configuration(context.getResources().getConfiguration());
+        Configuration config = new Configuration(current);
         config.setLocale(locale);
         return context.createConfigurationContext(config);
     }

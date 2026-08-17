@@ -1,4 +1,4 @@
-package com.vaonis.vesperawifihelper;
+package com.vaonis.vesperahelper;
 
 import android.Manifest;
 import android.app.Activity;
@@ -41,6 +41,7 @@ import java.util.concurrent.Executors;
 
 /** Selects a Vespera and requests its system-wide Wi-Fi connection. */
 public final class MainActivity extends Activity {
+    static final String EXTRA_FROM_BOOT = "from_boot";
     private static final int LOCATION_REQUEST_CODE = 100;
     private static final int SCAN_PERMISSION_REQUEST_CODE = 102;
     private WifiManager wifiManager;
@@ -51,6 +52,9 @@ public final class MainActivity extends Activity {
     private TextView vesperaInfo;
     private LinearLayout scanLegendRow;
     private TextView connectionInfo;
+    private TextView singularityInfo;
+    private TextView singularityTitle;
+    private Button singularityStatusBar;
     private TextView configuredDeviceInfo;
     private TextView deviceTitle;
     private LinearLayout savedDevicePanel;
@@ -68,9 +72,14 @@ public final class MainActivity extends Activity {
     private Button disconnect;
     private Button verify;
     private Button checkInstrument;
+    private Button restartSingularity;
     private TextView actionResult;
     private Spinner languageSpinner;
     private boolean languageSpinnerReady;
+    private Button tabWifi;
+    private Button tabPhotos;
+    private ScrollView wifiScroll;
+    private PhotoPanel photoPanel;
     /** True when the saved instrument is currently seen in Wi-Fi scan. */
     private boolean savedDeviceOnline;
     /** True from Connect tap until the service reports a terminal status. */
@@ -78,10 +87,18 @@ public final class MainActivity extends Activity {
     /** One-shot startup connection after the saved instrument appears in scan results. */
     private boolean autoConnectPending = true;
     private boolean portDiscoveryRunning;
-    private static final int COLOR_OFFLINE = 0xFF9E9E9E;
-    private static final int COLOR_DETECTED = 0xFFF9A825;
-    private static final int COLOR_CONNECTING = 0xFF1565C0;
-    private static final int COLOR_CONNECTED = 0xFF2E7D32;
+    /** Bumped to cancel an in-flight port + Singularity verification. */
+    private int verifyGeneration;
+    private int lastDetectedApiPort = -1;
+    private static final int PORT_PROBE_ATTEMPTS = 3;
+    private static final long PORT_PROBE_INITIAL_DELAY_MS = 1_500;
+    private static final long PORT_PROBE_RETRY_DELAY_MS = 1_000;
+    private static final int COLOR_OFFLINE = UiStyle.STEEL;
+    private static final int COLOR_DETECTED = UiStyle.AMBER;
+    private static final int COLOR_CONNECTING = UiStyle.STEEL_BLUE;
+    private static final int COLOR_CONNECTED = UiStyle.GREEN;
+    private static final int COLOR_ACTION = UiStyle.SLATE;
+    private static final int COLOR_DANGER = UiStyle.ROSE;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
     private InstrumentWatchdog instrumentWatchdog;
@@ -103,12 +120,17 @@ public final class MainActivity extends Activity {
                     VesperaConnectionService.requestDaemonRoute(MainActivity.this);
                     show(getString(R.string.connected_to,
                             deviceStore.getModel(), deviceStore.getSsid()));
-                    discoverApiPort();
+                    restoreInstrumentStatusIfKnown();
+                    verifyApiPorts(true);
                     startWatchdogIfConnected();
                 } else if (VesperaConnectionService.STATUS_DISCONNECTED.equals(connectionStatus)
                         || VesperaConnectionService.STATUS_LOST.equals(connectionStatus)
                         || VesperaConnectionService.STATUS_UNAVAILABLE.equals(connectionStatus)) {
+                    lastDetectedApiPort = -1;
+                    cancelPortVerification();
                     stopWatchdog();
+                    InstrumentWatchdog.clearSnapshot();
+                    resetSingularityStatusUi();
                     clearStaleReachabilityStatus(connectionStatus);
                 }
             }
@@ -120,7 +142,14 @@ public final class MainActivity extends Activity {
             if (message == null) return;
             boolean detected = intent.getBooleanExtra(InstrumentWatchdog.EXTRA_DETECTED, false);
             int port = intent.getIntExtra(InstrumentWatchdog.EXTRA_PORT, -1);
-            showInstrumentStatus(message, detected, port);
+            String statusCode = intent.getStringExtra(InstrumentWatchdog.EXTRA_STATUS);
+            if (statusCode == null) {
+                statusCode = detected
+                        ? SingularityDetector.Status.CONNECTED.name()
+                        : InstrumentWatchdog.STATUS_IDLE;
+            }
+            boolean manual = intent.getBooleanExtra(InstrumentWatchdog.EXTRA_MANUAL, false);
+            showInstrumentStatus(message, detected, port, statusCode, manual);
         }
     };
 
@@ -135,6 +164,7 @@ public final class MainActivity extends Activity {
         deviceStore = VesperaDeviceStore.from(this);
         buildUi();
         refreshConfiguredDeviceLabel();
+        PhotoSyncService.ensure(this);
     }
 
     private void buildUi() {
@@ -198,12 +228,14 @@ public final class MainActivity extends Activity {
         headerDivider.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, (int) (2 * density))));
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setClipToPadding(false);
-        scroll.setVerticalScrollBarEnabled(true);
-        scroll.setScrollbarFadingEnabled(false);
-        scroll.setLayoutParams(new LinearLayout.LayoutParams(
+        LinearLayout tabBar = buildTabBar(density);
+
+        wifiScroll = new ScrollView(this);
+        wifiScroll.setFillViewport(true);
+        wifiScroll.setClipToPadding(false);
+        wifiScroll.setVerticalScrollBarEnabled(true);
+        wifiScroll.setScrollbarFadingEnabled(false);
+        wifiScroll.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         LinearLayout layout = new LinearLayout(this);
@@ -218,6 +250,16 @@ public final class MainActivity extends Activity {
         connectionInfo = new TextView(this);
         connectionInfo.setText(getString(R.string.connection_state,
                 StatusTexts.connection(this, VesperaConnectionService.STATUS_DISCONNECTED)));
+        singularityInfo = new TextView(this);
+        singularityInfo.setText(getString(R.string.singularity_state,
+                StatusTexts.singularity(this, InstrumentWatchdog.STATUS_IDLE)));
+        singularityTitle = new TextView(this);
+        singularityTitle.setText(R.string.singularity_section);
+        singularityTitle.setTypeface(singularityTitle.getTypeface(), android.graphics.Typeface.BOLD);
+        singularityTitle.setPadding(0, (int) (10 * density), 0, (int) (4 * density));
+        singularityStatusBar = new Button(this);
+        singularityStatusBar.setAllCaps(false);
+        showIdleSingularityBar();
         configuredDeviceInfo = new TextView(this);
         vesperaInfo = new TextView(this);
         vesperaInfo.setText(R.string.scan_hint);
@@ -255,6 +297,7 @@ public final class MainActivity extends Activity {
         saveManual = new Button(this);
         saveManual.setText(R.string.btn_save_manual);
         saveManual.setOnClickListener(v -> saveManualDevice());
+        styleRaisedButton(saveManual, COLOR_ACTION, true);
         clearDevice = new Button(this);
         clearDevice.setText(R.string.btn_clear_device);
         clearDevice.setOnClickListener(v -> {
@@ -265,13 +308,15 @@ public final class MainActivity extends Activity {
             show(getString(R.string.device_cleared));
             showVesperaScanResult(false);
         });
-
+        styleRaisedButton(clearDevice, UiStyle.ROSE, true);
         locationSettings = new Button(this);
         locationSettings.setText(R.string.btn_location);
         locationSettings.setOnClickListener(v -> openLocationSettings());
+        styleRaisedButton(locationSettings, COLOR_ACTION, true);
         refresh = new Button(this);
         refresh.setText(R.string.btn_scan);
         refresh.setOnClickListener(v -> refreshVesperaScan());
+        styleRaisedButton(refresh, COLOR_ACTION, true);
         connect = new Button(this);
         connect.setText(R.string.btn_connect);
         connect.setOnClickListener(v -> connect());
@@ -289,10 +334,16 @@ public final class MainActivity extends Activity {
         portInput.setSingleLine(true);
         verify = new Button(this);
         verify.setText(R.string.btn_verify);
-        verify.setOnClickListener(v -> verifyReachability());
+        verify.setOnClickListener(v -> verifyApiPorts(false));
+        styleRaisedButton(verify, COLOR_ACTION, true);
         checkInstrument = new Button(this);
         checkInstrument.setText(R.string.btn_check_instrument);
         checkInstrument.setOnClickListener(v -> requestInstrumentCheck());
+        styleRaisedButton(checkInstrument, COLOR_ACTION, true);
+        restartSingularity = new Button(this);
+        restartSingularity.setText(R.string.btn_restart_singularity);
+        restartSingularity.setOnClickListener(v -> requestSingularityRestart());
+        styleRaisedButton(restartSingularity, UiStyle.TERRACOTTA, true);
         actionResult = new TextView(this);
         actionResult.setText(R.string.action_result_idle);
         refreshConnectButtons();
@@ -310,6 +361,9 @@ public final class MainActivity extends Activity {
         layout.addView(scanLegendRow);
         layout.addView(deviceStatusBar);
         layout.addView(foundDevicesList);
+        layout.addView(singularityTitle);
+        layout.addView(singularityInfo);
+        layout.addView(singularityStatusBar);
 
         int actionGap = (int) (12 * density);
         View actionDivider = new View(this);
@@ -327,18 +381,71 @@ public final class MainActivity extends Activity {
         layout.addView(portInput);
         layout.addView(verify);
         layout.addView(checkInstrument);
+        layout.addView(restartSingularity);
         layout.addView(actionResult);
-        scroll.addView(layout);
-        scroll.setOnApplyWindowInsetsListener((v, insets) -> {
+        wifiScroll.addView(layout);
+        wifiScroll.setOnApplyWindowInsetsListener((v, insets) -> {
             int insetBottom = insets.getSystemWindowInsetBottom();
             v.setPadding(v.getPaddingLeft(), v.getPaddingTop(), v.getPaddingRight(), insetBottom);
             return insets.consumeSystemWindowInsets();
         });
 
+        photoPanel = new PhotoPanel(this, density, padding);
+
         root.addView(header);
         root.addView(headerDivider);
-        root.addView(scroll);
+        root.addView(tabBar);
+        root.addView(wifiScroll);
+        root.addView(photoPanel.view());
         setContentView(root);
+        showTab(true);
+    }
+
+    private LinearLayout buildTabBar(float density) {
+        LinearLayout tabBar = new LinearLayout(this);
+        tabBar.setOrientation(LinearLayout.HORIZONTAL);
+        tabBar.setBackgroundColor(0xFFE8EEF4);
+        int tabPad = (int) (6 * density);
+        tabBar.setPadding(tabPad, 0, tabPad, tabPad);
+        tabBar.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        tabWifi = new Button(this);
+        tabWifi.setAllCaps(false);
+        tabWifi.setText(R.string.tab_wifi);
+        tabWifi.setOnClickListener(v -> showTab(true));
+        tabPhotos = new Button(this);
+        tabPhotos.setAllCaps(false);
+        tabPhotos.setText(R.string.tab_photos);
+        tabPhotos.setOnClickListener(v -> showTab(false));
+
+        LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tabLp.setMarginEnd((int) (6 * density));
+        tabWifi.setLayoutParams(tabLp);
+        LinearLayout.LayoutParams tabLp2 = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tabPhotos.setLayoutParams(tabLp2);
+        tabBar.addView(tabWifi);
+        tabBar.addView(tabPhotos);
+        return tabBar;
+    }
+
+    private void showTab(boolean wifi) {
+        if (wifiScroll != null) wifiScroll.setVisibility(wifi ? View.VISIBLE : View.GONE);
+        if (photoPanel != null) {
+            photoPanel.view().setVisibility(wifi ? View.GONE : View.VISIBLE);
+        }
+        styleTab(tabWifi, wifi);
+        styleTab(tabPhotos, !wifi);
+    }
+
+    private void styleTab(Button tab, boolean selected) {
+        if (tab == null) return;
+        tab.setAllCaps(false);
+        styleRaisedButton(tab, selected ? COLOR_CONNECTED : UiStyle.SLATE_MUTED, true);
+        tab.setTypeface(tab.getTypeface(), selected
+                ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
     }
 
     private String appVersionLabel() {
@@ -406,6 +513,11 @@ public final class MainActivity extends Activity {
         }
         if (locationManager != null && !locationManager.isLocationEnabled()) {
             vesperaInfo.setText(getString(R.string.location_off, scanPrerequisites()));
+            return;
+        }
+        if (isVesperaConnected()) {
+            showVesperaScanResult(false);
+            wifiManager.startScan();
             return;
         }
         vesperaInfo.setText(R.string.scanning);
@@ -485,7 +597,7 @@ public final class MainActivity extends Activity {
                     deviceStore.getModel().isEmpty() ? "Vespera" : deviceStore.getModel(),
                     deviceStore.getSsid(),
                     deviceStore.getBssid()));
-            styleDeviceRow(offline, COLOR_OFFLINE);
+            styleStatusBar(offline, COLOR_OFFLINE);
             foundDevicesList.addView(offline);
         }
         if (isVesperaRequesting()) {
@@ -527,8 +639,8 @@ public final class MainActivity extends Activity {
         chip.setTextSize(12);
         chip.setGravity(Gravity.CENTER);
         chip.setPadding(h, v, h, v);
-        chip.setBackgroundColor(backgroundColor);
-        chip.setTextColor(backgroundColor == COLOR_DETECTED ? 0xFF212121 : 0xFFFFFFFF);
+        UiStyle.applyRecessed(chip, backgroundColor);
+        chip.setTextColor(UiStyle.textOn(backgroundColor));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         lp.setMarginEnd(marginEnd);
@@ -542,10 +654,13 @@ public final class MainActivity extends Activity {
             showConnectingDeviceBar();
             return;
         }
+        if (isVesperaConnected()) {
+            return;
+        }
         deviceStatusBar.setEnabled(false);
         deviceStatusBar.setOnClickListener(null);
         deviceStatusBar.setText(R.string.scan_bar_searching);
-        styleDeviceRow(deviceStatusBar, COLOR_OFFLINE);
+        styleStatusBar(deviceStatusBar, COLOR_OFFLINE);
     }
 
     private void showConnectingDeviceBar() {
@@ -554,7 +669,7 @@ public final class MainActivity extends Activity {
         deviceStatusBar.setOnClickListener(null);
         String model = deviceStore.getModel().isEmpty() ? "Vespera" : deviceStore.getModel();
         deviceStatusBar.setText(getString(R.string.scan_bar_connecting, model, deviceStore.getSsid()));
-        styleDeviceRow(deviceStatusBar, COLOR_CONNECTING);
+        styleStatusBar(deviceStatusBar, COLOR_CONNECTING);
     }
 
     private void showIdleDeviceBar() {
@@ -562,7 +677,7 @@ public final class MainActivity extends Activity {
         deviceStatusBar.setEnabled(false);
         deviceStatusBar.setOnClickListener(null);
         deviceStatusBar.setText(R.string.scan_bar_idle);
-        styleDeviceRow(deviceStatusBar, COLOR_OFFLINE);
+        styleStatusBar(deviceStatusBar, COLOR_OFFLINE);
     }
 
     private void showOfflineDeviceBar() {
@@ -573,7 +688,7 @@ public final class MainActivity extends Activity {
                 deviceStore.getModel().isEmpty() ? "Vespera" : deviceStore.getModel(),
                 deviceStore.getSsid(),
                 deviceStore.getBssid()));
-        styleDeviceRow(deviceStatusBar, COLOR_OFFLINE);
+        styleStatusBar(deviceStatusBar, COLOR_OFFLINE);
     }
 
     private void bindDeviceRow(Button row, ScanResult result, boolean clickable) {
@@ -586,8 +701,8 @@ public final class MainActivity extends Activity {
         row.setText(marker + model + "\n" + result.SSID
                 + "\n" + result.BSSID + " · " + result.level + " dBm (" + bars + "/5) · "
                 + result.frequency + " MHz");
-        styleDeviceRow(row, connected ? COLOR_CONNECTED : COLOR_DETECTED);
-        if (clickable) {
+        styleDeviceRow(row, connected ? COLOR_CONNECTED : COLOR_DETECTED, clickable && !connected);
+        if (clickable && !connected) {
             row.setEnabled(true);
             row.setOnClickListener(v -> selectScannedDevice(result));
         } else {
@@ -596,9 +711,18 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void styleDeviceRow(Button row, int backgroundColor) {
-        row.setBackgroundColor(backgroundColor);
-        row.setTextColor(backgroundColor == COLOR_DETECTED ? 0xFF212121 : 0xFFFFFFFF);
+    private void styleStatusBar(TextView row, int backgroundColor) {
+        row.setAllCaps(false);
+        UiStyle.applyRecessed(row, backgroundColor);
+    }
+
+    private void styleDeviceRow(Button row, int backgroundColor, boolean asButton) {
+        row.setAllCaps(false);
+        if (asButton) {
+            styleRaisedButton(row, backgroundColor, true);
+        } else {
+            styleStatusBar(row, backgroundColor);
+        }
     }
 
     private boolean isVesperaConnected() {
@@ -661,34 +785,81 @@ public final class MainActivity extends Activity {
         refreshConnectButtons();
     }
 
-    private void discoverApiPort() {
-        if (portDiscoveryRunning) return;
-        Network network = VesperaConnectionService.getActiveNetwork();
-        if (network == null) return;
+    /** Discovers Vespera API port 8083/8082. Does not start, restart, or check Singularity. */
+    private void verifyApiPorts(boolean waitForNetwork) {
+        if (!isVesperaConnected()) {
+            actionResult.setText(getString(R.string.action_result,
+                    getString(R.string.no_vespera_network)));
+            return;
+        }
+        if (portDiscoveryRunning) {
+            actionResult.setText(R.string.api_port_busy);
+            return;
+        }
         portDiscoveryRunning = true;
+        final int generation = ++verifyGeneration;
+        actionResult.setText(R.string.api_port_checking);
+        VesperaConnectionService.requestDaemonRoute(this);
         probeExecutor.execute(() -> {
-            int detectedPort = InstrumentWatchdog.probeApiPort(network);
-            int result = detectedPort;
-            mainHandler.post(() -> {
-                portDiscoveryRunning = false;
-                if (result > 0) {
-                    hostInput.setText("10.0.0.1");
-                    portInput.setText(String.valueOf(result));
-                    actionResult.setText(getString(R.string.api_port_detected, result));
-                } else {
-                    actionResult.setText(R.string.api_port_not_found);
+            try {
+                if (waitForNetwork) sleepQuietly(PORT_PROBE_INITIAL_DELAY_MS);
+                int detectedPort = -1;
+                for (int attempt = 0; attempt < PORT_PROBE_ATTEMPTS; attempt++) {
+                    if (generation != verifyGeneration) return;
+                    if (!isVesperaConnected()) break;
+                    Network network = VesperaConnectionService.getActiveNetwork();
+                    if (network == null) break;
+                    if (attempt > 0) sleepQuietly(PORT_PROBE_RETRY_DELAY_MS);
+                    detectedPort = InstrumentWatchdog.probeApiPort(
+                            MainActivity.this, network, attempt == 0);
+                    if (detectedPort > 0) break;
                 }
-            });
+                final int result = detectedPort;
+                mainHandler.post(() -> {
+                    if (generation != verifyGeneration) return;
+                    if (!isVesperaConnected()) return;
+                    applyDetectedPort(result);
+                    if (result > 0) {
+                        actionResult.setText(getString(R.string.api_port_detected, result));
+                    } else {
+                        actionResult.setText(R.string.api_port_not_found);
+                    }
+                });
+            } finally {
+                mainHandler.post(() -> {
+                    if (generation == verifyGeneration) portDiscoveryRunning = false;
+                });
+            }
         });
     }
 
-    private void requestInstrumentCheck() {
-        if (!isVesperaConnected()) {
-            showInstrumentStatus(getString(R.string.watchdog_not_connected), false, -1);
-            return;
+    private void applyDetectedPort(int port) {
+        if (port <= 0) return;
+        lastDetectedApiPort = port;
+        InstrumentWatchdog.rememberPort(port);
+        hostInput.setText("10.0.0.1");
+        portInput.setText(String.valueOf(port));
+    }
+
+    private void cancelPortVerification() {
+        verifyGeneration++;
+        portDiscoveryRunning = false;
+    }
+
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
         }
-        showInstrumentStatus(getString(R.string.watchdog_checking), false, -1);
+    }
+
+    private void requestInstrumentCheck() {
         ensureWatchdog().requestManualCheck();
+    }
+
+    private void requestSingularityRestart() {
+        ensureWatchdog().requestManualRestart();
     }
 
     private InstrumentWatchdog ensureWatchdog() {
@@ -710,14 +881,87 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void showInstrumentStatus(String message, boolean detected, int port) {
+    private void restoreInstrumentStatusIfKnown() {
+        InstrumentWatchdog.Snapshot snap = InstrumentWatchdog.lastSnapshot();
+        if (snap == null) return;
+        showInstrumentStatus(snap.message, snap.detected, snap.port, snap.status, false);
+    }
+
+    private void resetSingularityStatusUi() {
+        showInstrumentStatus(getString(R.string.watchdog_not_connected), false, -1,
+                InstrumentWatchdog.STATUS_IDLE, true);
+    }
+
+    private void showInstrumentStatus(String message, boolean detected, int port, String statusCode,
+                                      boolean updateActionResult) {
         mainHandler.post(() -> {
-            actionResult.setText(getString(R.string.action_result, message));
-            if (detected && port > 0) {
-                hostInput.setText("10.0.0.1");
-                portInput.setText(String.valueOf(port));
+            applyDetectedPort(port);
+            if (updateActionResult) {
+                actionResult.setText(getString(R.string.action_result, message));
             }
+            if (singularityInfo != null) {
+                singularityInfo.setText(getString(R.string.singularity_state,
+                        StatusTexts.singularity(this, statusCode)));
+            }
+            updateSingularityStatusBar(statusCode);
         });
+    }
+
+    private void showIdleSingularityBar() {
+        updateSingularityStatusBar(InstrumentWatchdog.STATUS_IDLE);
+    }
+
+    private void updateSingularityStatusBar(String statusCode) {
+        if (singularityStatusBar == null) return;
+        singularityStatusBar.setEnabled(false);
+        singularityStatusBar.setOnClickListener(null);
+        if (statusCode == null || InstrumentWatchdog.STATUS_IDLE.equals(statusCode)) {
+            singularityStatusBar.setText(R.string.singularity_bar_idle);
+            styleStatusBar(singularityStatusBar, COLOR_OFFLINE);
+            return;
+        }
+        if (InstrumentWatchdog.STATUS_CHECKING.equals(statusCode)) {
+            singularityStatusBar.setText(R.string.singularity_bar_checking);
+            styleStatusBar(singularityStatusBar, COLOR_CONNECTING);
+            return;
+        }
+        if (InstrumentWatchdog.STATUS_RECOVERING.equals(statusCode)) {
+            singularityStatusBar.setText(R.string.singularity_bar_recovering);
+            styleStatusBar(singularityStatusBar, COLOR_CONNECTING);
+            return;
+        }
+        if (InstrumentWatchdog.STATUS_STARTING.equals(statusCode)) {
+            singularityStatusBar.setText(R.string.singularity_bar_starting);
+            styleStatusBar(singularityStatusBar, COLOR_CONNECTING);
+            return;
+        }
+        if (SingularityDetector.Status.CONNECTED.name().equals(statusCode)) {
+            singularityStatusBar.setText(R.string.singularity_bar_connected);
+            styleStatusBar(singularityStatusBar, COLOR_CONNECTED);
+            return;
+        }
+        if (SingularityDetector.Status.NOT_RUNNING.name().equals(statusCode)) {
+            singularityStatusBar.setText(R.string.singularity_bar_not_running);
+            styleStatusBar(singularityStatusBar, COLOR_DETECTED);
+            return;
+        }
+        if (SingularityDetector.Status.API_DOWN.name().equals(statusCode)) {
+            singularityStatusBar.setText(R.string.singularity_bar_api_down);
+            styleStatusBar(singularityStatusBar, COLOR_DETECTED);
+            return;
+        }
+        if (SingularityDetector.Status.NO_WIFI.name().equals(statusCode)) {
+            singularityStatusBar.setText(R.string.singularity_bar_no_wifi);
+            styleStatusBar(singularityStatusBar, COLOR_OFFLINE);
+            return;
+        }
+        if (SingularityDetector.Status.DAEMON_MISSING.name().equals(statusCode)) {
+            singularityStatusBar.setText(R.string.singularity_bar_no_daemon);
+            styleStatusBar(singularityStatusBar, COLOR_OFFLINE);
+            return;
+        }
+        singularityStatusBar.setText(R.string.singularity_bar_disconnected);
+        styleStatusBar(singularityStatusBar, COLOR_DETECTED);
     }
 
     private void verifyReachability() {
@@ -737,7 +981,7 @@ public final class MainActivity extends Activity {
         }
         showVerification(getString(R.string.verifying, host, port));
         probeExecutor.execute(() -> {
-            try (Socket socket = network.getSocketFactory().createSocket()) {
+            try (Socket socket = VesperaSockets.create(network)) {
                 socket.connect(new InetSocketAddress(host, port), 5_000);
                 showVerification(getString(R.string.reachable, host, port));
             } catch (IOException failure) {
@@ -750,11 +994,15 @@ public final class MainActivity extends Activity {
     private void disconnect() {
         autoConnectPending = false;
         connectRequested = false;
+        lastDetectedApiPort = -1;
+        cancelPortVerification();
         stopWatchdog();
+        InstrumentWatchdog.clearSnapshot();
         Intent service = new Intent(this, VesperaConnectionService.class)
                 .setAction(VesperaConnectionService.ACTION_DISCONNECT);
         startService(service);
         setConnectionState(VesperaConnectionService.STATUS_DISCONNECTED);
+        resetSingularityStatusUi();
         clearStaleReachabilityStatus(VesperaConnectionService.STATUS_DISCONNECTED);
     }
 
@@ -788,6 +1036,14 @@ public final class MainActivity extends Activity {
             if (VesperaConnectionService.STATUS_CONNECTED.equals(code)) {
                 status.setText(getString(R.string.connected_to,
                         deviceStore.getModel(), deviceStore.getSsid()));
+            } else if (!VesperaConnectionService.STATUS_CONNECTED.equals(code)
+                    && (code == null
+                    || !code.startsWith(VesperaConnectionService.STATUS_REQUESTING))) {
+                if (singularityInfo != null) {
+                    singularityInfo.setText(getString(R.string.singularity_state,
+                            StatusTexts.singularity(this, InstrumentWatchdog.STATUS_IDLE)));
+                }
+                showIdleSingularityBar();
             }
             refreshConnectButtons();
             if (deviceStatusBar == null) return;
@@ -812,7 +1068,7 @@ public final class MainActivity extends Activity {
         if (connected) {
             connect.setVisibility(View.GONE);
             disconnect.setVisibility(View.VISIBLE);
-            styleActionButton(disconnect, true, 0xFFC62828);
+            styleActionButton(disconnect, true, COLOR_DANGER);
         } else {
             disconnect.setVisibility(View.GONE);
             connect.setVisibility(View.VISIBLE);
@@ -831,11 +1087,24 @@ public final class MainActivity extends Activity {
     }
 
     private void styleActionButton(Button button, boolean selectable, int color) {
-        button.setEnabled(selectable);
         button.setAllCaps(true);
-        button.setBackgroundColor(color);
-        button.setTextColor(0xFFFFFFFF);
-        button.setAlpha(selectable ? 1f : 0.75f);
+        styleRaisedButton(button, color, selectable);
+    }
+
+    private void styleRaisedButton(Button button, int color, boolean enabled) {
+        if (button == null) return;
+        UiStyle.applyRaised(button, color, enabled);
+        float density = getResources().getDisplayMetrics().density;
+        if (button.getParent() instanceof LinearLayout
+                && ((LinearLayout) button.getParent()).getOrientation() == LinearLayout.VERTICAL) {
+            UiStyle.spaceBelow(button, density);
+        } else if (button.getParent() == null) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            lp.bottomMargin = Math.round(8 * density);
+            button.setLayoutParams(lp);
+        }
     }
 
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] grants) {
@@ -859,7 +1128,10 @@ public final class MainActivity extends Activity {
         setConnectionState(currentConnectionStatus);
         if (VesperaConnectionService.STATUS_CONNECTED.equals(currentConnectionStatus)) {
             VesperaConnectionService.requestDaemonRoute(this);
-            discoverApiPort();
+            restoreInstrumentStatusIfKnown();
+            if (!InstrumentWatchdog.hasCachedStatus()) {
+                verifyApiPorts(false);
+            }
             startWatchdogIfConnected();
         }
         if (!scanReceiverRegistered) {
@@ -890,6 +1162,7 @@ public final class MainActivity extends Activity {
             instrumentStatusReceiverRegistered = true;
         }
         refreshVesperaScan();
+        if (photoPanel != null) photoPanel.onResume();
     }
 
     @Override protected void onDestroy() {
@@ -916,6 +1189,7 @@ public final class MainActivity extends Activity {
             unregisterReceiver(instrumentStatusReceiver);
             instrumentStatusReceiverRegistered = false;
         }
+        if (photoPanel != null) photoPanel.onPause();
         super.onPause();
     }
 }
