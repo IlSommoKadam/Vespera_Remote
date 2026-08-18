@@ -52,11 +52,11 @@ final class VesperaCommandClient {
             return new Result(false, -1, snap.authMissingCode());
         }
         String body = "{}";
+        boolean haveTarget = false;
         if (command == Command.RESUME) {
             body = VesperaLastTarget.startObservationBody();
-            if (body.isEmpty()) {
-                return new Result(false, -1, "no_target");
-            }
+            haveTarget = !body.isEmpty();
+            if (!haveTarget) body = "{\"resume\":true}";
         }
         String authorization = VesperaApiAuth.authorizationHeader(snap);
         if (authorization.isEmpty()) {
@@ -66,10 +66,7 @@ final class VesperaCommandClient {
         if (command == Command.SHUTDOWN) {
             paths = new String[] { command.path, "/v1/general/powerOff", "/v1/device/shutdown" };
         } else if (command == Command.RESUME) {
-            paths = new String[] {
-                    "/v1/general/resumeObservation",
-                    command.path
-            };
+            paths = new String[] { "/v1/general/resumeObservation", command.path };
         } else {
             paths = new String[] { command.path };
         }
@@ -87,6 +84,10 @@ final class VesperaCommandClient {
                 last = new Result(ok, response.code, msg);
                 if (ok) return last;
                 if (response.code != 404 && response.code != 405) return last;
+            }
+            if (command == Command.RESUME && !haveTarget) {
+                return new Result(false, last.httpCode,
+                        last.message.isEmpty() ? "no_target" : last.message);
             }
             return last;
         } catch (Exception failure) {

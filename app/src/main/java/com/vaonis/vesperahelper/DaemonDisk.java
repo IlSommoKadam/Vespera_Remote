@@ -1,6 +1,7 @@
 package com.vaonis.vesperahelper;
 
 import android.content.Context;
+import android.os.StatFs;
 import android.os.SystemClock;
 import android.system.ErrnoException;
 import android.system.Os;
@@ -50,7 +51,57 @@ public final class DaemonDisk {
         }
     }
 
+    public static final class Space {
+        public final boolean known;
+        public final int usedPercent;
+        public final long usedBytes;
+        public final long totalBytes;
+
+        Space(boolean known, int usedPercent, long usedBytes, long totalBytes) {
+            this.known = known;
+            this.usedPercent = usedPercent;
+            this.usedBytes = usedBytes;
+            this.totalBytes = totalBytes;
+        }
+
+        static Space unknown() {
+            return new Space(false, -1, 0, 0);
+        }
+
+        public String label() {
+            if (!known || usedPercent < 0 || totalBytes <= 0) return "";
+            return usedPercent + "%  ·  " + formatBytes(usedBytes) + " / " + formatBytes(totalBytes);
+        }
+    }
+
     private DaemonDisk() {}
+
+    /** Occupied space on the mounted USB HD bind, if present. */
+    public static Space photosSpace(Context context) {
+        File dir = photosDir(context);
+        if (!isPhotosBoundLive(dir)) return Space.unknown();
+        try {
+            StatFs fs = new StatFs(dir.getAbsolutePath());
+            long total = fs.getTotalBytes();
+            long free = fs.getAvailableBytes();
+            if (total <= 0) return Space.unknown();
+            long used = Math.max(0, total - Math.max(0, free));
+            int percent = (int) Math.round(100.0 * used / (double) total);
+            if (percent > 100) percent = 100;
+            return new Space(true, percent, used, total);
+        } catch (IllegalArgumentException ignored) {
+            return Space.unknown();
+        }
+    }
+
+    private static String formatBytes(long bytes) {
+        double tb = bytes / (1024.0 * 1024.0 * 1024.0 * 1024.0);
+        if (tb >= 1) return String.format(java.util.Locale.US, "%.1f TB", tb);
+        double gb = bytes / (1024.0 * 1024.0 * 1024.0);
+        if (gb >= 1) return String.format(java.util.Locale.US, "%.1f GB", gb);
+        double mb = bytes / (1024.0 * 1024.0);
+        return String.format(java.util.Locale.US, "%.0f MB", mb);
+    }
 
     public static File photosDir(Context context) {
         File emulatedParent = context.getExternalFilesDir(null);

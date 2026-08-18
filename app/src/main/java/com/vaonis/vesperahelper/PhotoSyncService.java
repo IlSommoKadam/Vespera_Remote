@@ -44,6 +44,7 @@ public final class PhotoSyncService extends Service {
     public static final String ACTION_UNMOUNT = "com.vaonis.vesperahelper.PHOTO_UNMOUNT";
     public static final String ACTION_EJECT = "com.vaonis.vesperahelper.PHOTO_EJECT";
     public static final String ACTION_SYNC_NOW = "com.vaonis.vesperahelper.PHOTO_SYNC_NOW";
+    public static final String ACTION_SYNC_STORAGE = "com.vaonis.vesperahelper.PHOTO_SYNC_STORAGE";
     public static final String ACTION_FORGET = "com.vaonis.vesperahelper.PHOTO_FORGET";
     public static final String ACTION_BOOTSTRAP = "com.vaonis.vesperahelper.PHOTO_BOOTSTRAP";
     public static final String ACTION_RESUME = "com.vaonis.vesperahelper.PHOTO_RESUME";
@@ -72,6 +73,8 @@ public final class PhotoSyncService extends Service {
     private static final int NOTIFICATION_ID = 43;
     /** HD/FTP housekeeping only — auto-sync is scheduled separately. */
     private static final long TICK_MS = 120_000;
+    static final int STORAGE_SYNC_PERCENT = 80;
+    private static final long STORAGE_SYNC_COOLDOWN_MS = 10 * 60_000L;
     private static final long AUTO_RETRY_MS = 5 * 60_000L;
     private static final long MIN_AUTO_DELAY_MS = 5_000L;
 
@@ -104,6 +107,7 @@ public final class PhotoSyncService extends Service {
     private SyncProgress lastProgress;
     private String lastBroadcastPhase = "";
     private volatile long extraAutoDelayMs;
+    private long lastStorageSyncAt;
     private boolean connectionReceiverRegistered;
     private final BroadcastReceiver connectionReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -171,6 +175,12 @@ public final class PhotoSyncService extends Service {
     public static void syncNow(Context context) {
         context.startForegroundService(new Intent(context, PhotoSyncService.class)
                 .setAction(ACTION_SYNC_NOW));
+    }
+
+    public static void syncIfStorageHigh(Context context, int usedPercent) {
+        if (context == null || usedPercent < STORAGE_SYNC_PERCENT) return;
+        context.startForegroundService(new Intent(context, PhotoSyncService.class)
+                .setAction(ACTION_SYNC_STORAGE));
     }
 
     public static void resumeSync(Context context) {
@@ -279,6 +289,8 @@ public final class PhotoSyncService extends Service {
             pauseRequested.set(false);
             if (syncStore != null) syncStore.setPaused(false);
             syncExecutor.execute(() -> maybeAutoSync(true));
+        } else if (ACTION_SYNC_STORAGE.equals(action)) {
+            syncExecutor.execute(this::maybeSyncForFullStorage);
         } else if (ACTION_RESUME.equals(action)) {
             pauseRequested.set(false);
             if (syncStore != null) syncStore.setPaused(false);
@@ -648,6 +660,21 @@ public final class PhotoSyncService extends Service {
         Log.i(TAG, "next auto-sync in " + (delay / 1000L) + "s");
     }
 
+    private void maybeSyncForFullStorage() {
+        synchronized (syncLock) {
+            if (syncing) return;
+        }
+        if (syncStore != null && syncStore.paused()) return;
+        long now = System.currentTimeMillis();
+        if (lastStorageSyncAt > 0 && now - lastStorageSyncAt < STORAGE_SYNC_COOLDOWN_MS) {
+            return;
+        }
+        lastStorageSyncAt = now;
+        Log.i(TAG, "storage ≥" + STORAGE_SYNC_PERCENT + "% — starting photo sync");
+        pauseRequested.set(false);
+        maybeAutoSync(true);
+    }
+
     private void maybeAutoSync(boolean force) {
         Context localized = AppLocale.wrap(this);
         boolean resume = shouldResume() || (force && hasSuspendedWork());
@@ -741,7 +768,6 @@ public final class PhotoSyncService extends Service {
                 if (paused) {
                     syncStore.markInterrupted(this);
                     syncStore.setPaused(true);
-                    lastSync = localized.getString(R.string.photo_sync_paused);
                 } else if (complete) {
                     syncStore.clearInProgress(this);
                 } else if (!startedWork) {
@@ -750,29 +776,22 @@ public final class PhotoSyncService extends Service {
                     syncStore.markInterrupted(this);
                 }
                 if (paused) {
-                    lastSync = localized.getString(R.string.photo_sync_paused);
+                    message = localized.getString(R.string.photo_sync_paused);
                 } else if (result.error != null) {
                     syncStore.recordFailure(result.error);
-                    if ("missing-user".equals(result.error)) {
-                        lastSync = localized.getString(R.string.photos_sync_no_user);
-                    } else if ("hd-unmounted".equals(result.error)) {
-                        lastSync = localized.getString(R.string.photos_sync_need_hd);
-                    } else if ("local-user".equals(result.error)) {
-                        lastSync = localized.getString(R.string.photos_sync_local_user);
-                    } else {
-                        lastSync = localized.getString(R.string.photos_sync_error, result.error);
-                    }
+                    message = lastErrorLabel(localized, result.error);
                 } else {
                     syncStore.recordSuccess(result.downloaded, result.skipped, result.deleted, result.bytes);
                     syncStore.setPhotosPath(new File(root, "USER").getAbsolutePath());
-                    lastSync = formatSyncSummary(localized, result, new File(root, "USER"));
+                    message = formatSyncSummary(localized, result, new File(root, "USER"));
                 }
-                message = lastSync;
+                restoreLastSync();
+                if (message == null || message.isEmpty()) message = lastSync;
                 if (lastProgress != null) {
                     lastProgress.active = false;
                     lastProgress.phase = paused ? SyncProgress.PHASE_PAUSED
                             : (result.error != null ? SyncProgress.PHASE_ERROR : SyncProgress.PHASE_DONE);
-                    lastProgress.detail = lastSync;
+                    lastProgress.detail = message;
                     lastProgress.etaMs = 0;
                     if (hud != null) hud.bind(lastProgress);
                 }
@@ -1113,7 +1132,61 @@ public final class PhotoSyncService extends Service {
         return 20;
     }
 
+    private void restoreLastSync() {
+        if (syncStore == null) {
+            lastSync = "";
+            return;
+        }
+        Context localized = AppLocale.wrap(this);
+        long at = syncStore.lastAt();
+        if (at <= 0) {
+            lastSync = "";
+            return;
+        }
+        String when = formatLastSyncWhen(at);
+        if (syncStore.lastOk()) {
+            lastSync = localized.getString(R.string.photos_last_sync_ok,
+                    when, syncStore.lastCopied(), syncStore.lastSkipped(),
+                    syncStore.lastDeleted());
+        } else {
+            lastSync = localized.getString(R.string.photos_last_sync_fail,
+                    when, lastErrorLabel(localized, syncStore.lastError()));
+        }
+    }
+
+    private String formatLastSyncWhen(long timeMs) {
+        Calendar calendar = Calendar.getInstance(
+                syncStore != null ? syncStore.zone() : java.util.TimeZone.getDefault());
+        calendar.setTimeInMillis(timeMs);
+        Calendar now = Calendar.getInstance(calendar.getTimeZone());
+        String time = String.format(java.util.Locale.US, "%02d:%02d",
+                calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE));
+        if (calendar.get(Calendar.YEAR) == now.get(Calendar.YEAR)
+                && calendar.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)) {
+            return time;
+        }
+        return String.format(java.util.Locale.US, "%02d/%02d %s",
+                calendar.get(Calendar.DAY_OF_MONTH),
+                calendar.get(Calendar.MONTH) + 1,
+                time);
+    }
+
+    private String lastErrorLabel(Context localized, String error) {
+        if ("missing-user".equals(error)) {
+            return localized.getString(R.string.photos_sync_no_user);
+        }
+        if ("hd-unmounted".equals(error)) {
+            return localized.getString(R.string.photos_sync_need_hd);
+        }
+        if ("local-user".equals(error)) {
+            return localized.getString(R.string.photos_sync_local_user);
+        }
+        if (error == null || error.isEmpty()) return "—";
+        return error;
+    }
+
     private void publish() {
+        restoreLastSync();
         Context localized = AppLocale.wrap(this);
         String last = lastSync == null || lastSync.isEmpty()
                 ? localized.getString(R.string.photos_never_sync) : lastSync;

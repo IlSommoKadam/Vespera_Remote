@@ -172,6 +172,15 @@
     <string name="telescope_power_message">The telescope is not plugged into mains power (running on battery). Accept to continue without more alerts until you plug it in, or Ignore: you will be asked again the next time you open this tab.</string>
     <string name="telescope_power_accept">Accept</string>
     <string name="telescope_power_ignore">Ignore</string>
+    <string name="telescope_disk_title">Hard disk</string>
+    <string name="telescope_disk_message">The hard disk is more than 80%% full (%1$s). Accept to continue without more alerts until usage drops below 80%%, or Ignore: you will be asked again the next time you open this tab.</string>
+    <string name="telescope_confirm_ok">Confirm</string>
+    <string name="telescope_confirm_generic">Run this command?</string>
+    <string name="telescope_confirm_refresh">Refresh telescope status?</string>
+    <string name="telescope_confirm_park">Close the arm and park the telescope?</string>
+    <string name="telescope_confirm_stop">Stop the current observation?</string>
+    <string name="telescope_confirm_resume">Resume observation using the last target from status?</string>
+    <string name="telescope_confirm_init">Initialize the telescope?</string>
     <string name="telescope_shutdown_title">Power off telescope</string>
     <string name="telescope_shutdown_message">Power off the Vespera? Wi‑Fi will drop and Helper will lose the connection.</string>
     <string name="status_tab_title">Vespera status</string>
@@ -222,7 +231,9 @@
     <string name="status_tab_field_temperature">Temperature</string>
     <string name="status_tab_field_firmware">Firmware</string>
     <string name="status_tab_field_error">Error</string>
-    <string name="status_tab_field_storage">Storage</string>
+    <string name="status_tab_field_storage">Internal photos</string>
+    <string name="status_tab_field_disk">Hard disk</string>
+    <string name="status_tab_storage_full">%1$s — sync (≥80%%)</string>
     <string name="status_tab_field_battery">Battery</string>
     <string name="status_tab_field_raw">JSON</string>
     <string name="status_tab_yes">yes</string>
@@ -238,6 +249,7 @@
     <string name="photo_btn_sync_now">Copy photos now</string>
     <string name="photo_btn_continue">Continue</string>
     <string name="photo_hd_idle">No disk selected. Refresh the list, pick the HD, then Mount.</string>
+    <string name="photo_hd_occupied">Occupied: %1$s</string>
     <string name="photo_hd_none">No USB/SCSI disk found. Plug in the HD and refresh.</string>
     <string name="photo_hd_found">%1$d disk(s) found — tap to select, then Mount.</string>
     <string name="photo_hd_select_first">Select a disk from the list first.</string>
@@ -342,6 +354,8 @@
     <string name="photos_sync_error">@string/photo_sync_fail</string>
     <string name="photos_sync_done">Sync OK: %1$d downloaded, %2$d already present, %3$d deleted on Vespera, %4$d errors (%5$s)</string>
     <string name="photos_never_sync">Last sync: —</string>
+    <string name="photos_last_sync_ok">Last sync: %1$s · OK (%2$d copied, %3$d already present, %4$d deleted)</string>
+    <string name="photos_last_sync_fail">Last sync: %1$s · error — %2$s</string>
 
     <string name="hd_browser_shortcut_label">HD photos</string>
     <string name="hd_browser_shortcut_short">HD photos</string>

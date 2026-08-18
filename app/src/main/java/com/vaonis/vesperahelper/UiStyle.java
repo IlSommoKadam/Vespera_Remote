@@ -26,7 +26,9 @@ final class UiStyle {
     static final int AMBER = 0xFFC9A227;
     /** Restart / eject (warning, not destructive). */
     static final int TERRACOTTA = 0xFFC0724A;
-    /** Disconnect / clear / unmount. */
+    /** Stop observation (halt, not power-off). */
+    static final int INK = 0xFF2A2D31;
+    /** Disconnect / clear / unmount / power off. */
     static final int ROSE = 0xFFB05757;
     /** Offline / disabled. */
     static final int STEEL = 0xFF8A97A3;

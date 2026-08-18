@@ -1,6 +1,7 @@
 package com.vaonis.vesperahelper;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -39,6 +40,7 @@ final class PhotoPanel {
     private final PhotoSyncStore syncStore;
     private final ScrollView scroll;
     private final TextView hdStatus;
+    private final TextView hdSpaceView;
     private final TextView savedLabel;
     private final LinearLayout diskList;
     private final Button refreshDisks;
@@ -72,6 +74,11 @@ final class PhotoPanel {
     private boolean ejected;
     private int listedCount;
     private String lastMessage = "";
+    private boolean visible;
+    private AlertDialog diskDialog;
+    private boolean diskWarningIgnoredThisVisit;
+    private boolean diskWarningAccepted;
+    private DaemonDisk.Space hdSpace = DaemonDisk.Space.unknown();
 
     PhotoPanel(Activity activity, float density, int padding) {
         this.activity = activity;
@@ -94,6 +101,9 @@ final class PhotoPanel {
 
         TextView title = title(activity.getString(R.string.photo_section_hd));
         hdStatus = body(activity.getString(R.string.photo_hd_idle));
+        hdSpaceView = body(activity.getString(R.string.photo_hd_occupied, "—"));
+        hdSpaceView.setTextSize(15);
+        hdSpaceView.setTypeface(hdSpaceView.getTypeface(), android.graphics.Typeface.BOLD);
         savedLabel = body(savedText());
 
         refreshDisks = action(activity.getString(R.string.photo_btn_refresh_disks), COLOR_CONNECTING);
@@ -324,6 +334,7 @@ final class PhotoPanel {
 
         layout.addView(title);
         layout.addView(hdStatus);
+        layout.addView(hdSpaceView);
         layout.addView(savedLabel);
         layout.addView(refreshDisks);
         layout.addView(mount);
@@ -358,7 +369,14 @@ final class PhotoPanel {
     }
 
     void onResume() {
-        if (receiverRegistered) return;
+        boolean opening = !visible;
+        visible = true;
+        if (opening) diskWarningIgnoredThisVisit = false;
+        if (receiverRegistered) {
+            refreshHdSpace();
+            maybeShowDiskWarning();
+            return;
+        }
         IntentFilter filter = new IntentFilter(PhotoSyncService.ACTION_STATUS);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             activity.registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
@@ -370,9 +388,13 @@ final class PhotoPanel {
                 .setAction(PhotoSyncService.ACTION_LIST_DISKS));
         refreshOverlayRow();
         refreshUserFolderHint();
+        refreshHdSpace();
+        maybeShowDiskWarning();
     }
 
     void onPause() {
+        visible = false;
+        dismissDiskWarning(false);
         if (!receiverRegistered) return;
         activity.unregisterReceiver(statusReceiver);
         receiverRegistered = false;
@@ -419,6 +441,8 @@ final class PhotoPanel {
             continueSync.setVisibility(canContinue ? View.VISIBLE : View.GONE);
             continueSync.setEnabled(canContinue);
             UiStyle.applyRaised(continueSync, canContinue ? COLOR_DETECTED : COLOR_OFFLINE, canContinue);
+            refreshHdSpace();
+            maybeShowDiskWarning();
         }
     };
 
@@ -677,6 +701,56 @@ final class PhotoPanel {
         String label = diskStore.getLabel();
         if (label == null || label.isEmpty() || "-".equals(label)) label = diskStore.getId();
         return activity.getString(R.string.photo_hd_saved, label, diskStore.getId());
+    }
+
+    private void refreshHdSpace() {
+        hdSpace = DaemonDisk.photosSpace(activity);
+        if (hdSpace.known && hdSpace.usedPercent < PhotoSyncService.STORAGE_SYNC_PERCENT) {
+            diskWarningAccepted = false;
+            dismissDiskWarning(true);
+        }
+        String occupied = (hdSpace != null && hdSpace.known && !hdSpace.label().isEmpty())
+                ? hdSpace.label()
+                : "—";
+        hdSpaceView.setText(activity.getString(R.string.photo_hd_occupied, occupied));
+    }
+
+    private void maybeShowDiskWarning() {
+        if (!visible || activity.isFinishing()) return;
+        if (hdSpace == null || !hdSpace.known
+                || hdSpace.usedPercent < PhotoSyncService.STORAGE_SYNC_PERCENT) {
+            return;
+        }
+        if (diskWarningAccepted || diskWarningIgnoredThisVisit) return;
+        if (diskDialog != null && diskDialog.isShowing()) return;
+        String occupied = hdSpace.label().isEmpty() ? (hdSpace.usedPercent + "%") : hdSpace.label();
+        AlertDialog dialog = new AlertDialog.Builder(activity)
+                .setTitle(R.string.telescope_disk_title)
+                .setMessage(activity.getString(R.string.telescope_disk_message, occupied))
+                .setPositiveButton(R.string.telescope_power_accept, (d, w) -> {
+                    diskWarningAccepted = true;
+                    diskWarningIgnoredThisVisit = false;
+                })
+                .setNegativeButton(R.string.telescope_power_ignore, (d, w) -> {
+                    diskWarningAccepted = false;
+                    diskWarningIgnoredThisVisit = true;
+                })
+                .setOnCancelListener(d -> {
+                    diskWarningAccepted = false;
+                    diskWarningIgnoredThisVisit = true;
+                })
+                .create();
+        diskDialog = dialog;
+        dialog.show();
+    }
+
+    private void dismissDiskWarning(boolean resetIgnore) {
+        AlertDialog dialog = diskDialog;
+        diskDialog = null;
+        if (dialog != null && dialog.isShowing()) {
+            dialog.dismiss();
+        }
+        if (resetIgnore) diskWarningIgnoredThisVisit = false;
     }
 
     private TextView title(String text) {

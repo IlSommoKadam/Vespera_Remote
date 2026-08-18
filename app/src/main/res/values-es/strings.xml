@@ -172,6 +172,15 @@
     <string name="telescope_power_message">El telescopio no está conectado a la red eléctrica (funciona con batería). Acepta para continuar sin más avisos hasta que lo enchufes, o Ignora: se te preguntará de nuevo al abrir esta pestaña.</string>
     <string name="telescope_power_accept">Aceptar</string>
     <string name="telescope_power_ignore">Ignorar</string>
+    <string name="telescope_disk_title">Disco duro</string>
+    <string name="telescope_disk_message">El disco duro está ocupado más del 80%% (%1$s). Acepta para continuar sin más avisos hasta que baje del 80%%, o Ignora: se te preguntará de nuevo al abrir esta pestaña.</string>
+    <string name="telescope_confirm_ok">Confirmar</string>
+    <string name="telescope_confirm_generic">¿Ejecutar este comando?</string>
+    <string name="telescope_confirm_refresh">¿Actualizar el estado del telescopio?</string>
+    <string name="telescope_confirm_park">¿Cerrar el brazo y aparcar el telescopio?</string>
+    <string name="telescope_confirm_stop">¿Detener la observación en curso?</string>
+    <string name="telescope_confirm_resume">¿Reanudar la observación con el último objetivo del estado?</string>
+    <string name="telescope_confirm_init">¿Inicializar el telescopio?</string>
     <string name="telescope_shutdown_title">Apagar telescopio</string>
     <string name="telescope_shutdown_message">¿Apagar el Vespera? El Wi‑Fi se cerrará y Helper perderá la conexión.</string>
     <string name="status_tab_title">Estado Vespera</string>
@@ -222,7 +231,9 @@
     <string name="status_tab_field_temperature">Temperatura</string>
     <string name="status_tab_field_firmware">Firmware</string>
     <string name="status_tab_field_error">Error</string>
-    <string name="status_tab_field_storage">Almacenamiento</string>
+    <string name="status_tab_field_storage">Fotos internas</string>
+    <string name="status_tab_field_disk">Disco duro</string>
+    <string name="status_tab_storage_full">%1$s — sync (≥80%%)</string>
     <string name="status_tab_field_battery">Batería</string>
     <string name="status_tab_field_raw">JSON</string>
     <string name="status_tab_yes">sí</string>
@@ -238,6 +249,7 @@
     <string name="photo_btn_sync_now">Copiar fotos ahora</string>
     <string name="photo_btn_continue">Continuar</string>
     <string name="photo_hd_idle">Ningún disco seleccionado. Actualiza la lista, elige el HD y pulsa Montar.</string>
+    <string name="photo_hd_occupied">Ocupado: %1$s</string>
     <string name="photo_hd_none">Ningún disco USB/SCSI encontrado. Conecta el HD y actualiza.</string>
     <string name="photo_hd_found">%1$d disco(s) encontrado(s) — toca para seleccionar y luego Montar.</string>
     <string name="photo_hd_select_first">Selecciona primero un disco de la lista.</string>
@@ -342,6 +354,8 @@
     <string name="photos_sync_error">@string/photo_sync_fail</string>
     <string name="photos_sync_done">Sync OK: %1$d descargados, %2$d ya presentes, %3$d borrados en el Vespera, %4$d errores (%5$s)</string>
     <string name="photos_never_sync">Última sync: —</string>
+    <string name="photos_last_sync_ok">Última sync: %1$s · OK (%2$d copiados, %3$d ya presentes, %4$d borrados)</string>
+    <string name="photos_last_sync_fail">Última sync: %1$s · error — %2$s</string>
 
     <string name="hd_browser_shortcut_label">Fotos HD</string>
     <string name="hd_browser_shortcut_short">Fotos HD</string>

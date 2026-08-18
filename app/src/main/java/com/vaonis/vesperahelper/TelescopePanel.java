@@ -88,7 +88,7 @@ final class TelescopePanel {
         lastUpdate.setTextSize(12);
         refreshStatus = action(activity.getString(R.string.telescope_btn_refresh_status),
                 UiStyle.SLATE);
-        refreshStatus.setOnClickListener(v -> refreshStatusNow(true));
+        refreshStatus.setOnClickListener(v -> confirmRefresh());
         scroll.setDescendantFocusability(LinearLayout.FOCUS_BEFORE_DESCENDANTS);
 
         layout.addView(statusBox);
@@ -100,13 +100,13 @@ final class TelescopePanel {
         cmdHint.setTextSize(13);
         layout.addView(cmdHint);
         cmdPark = action(activity.getString(R.string.telescope_btn_park), UiStyle.TERRACOTTA);
-        cmdPark.setOnClickListener(v -> runCommand(VesperaCommandClient.Command.PARK));
-        cmdStop = action(activity.getString(R.string.telescope_btn_stop), UiStyle.ROSE);
-        cmdStop.setOnClickListener(v -> runCommand(VesperaCommandClient.Command.STOP));
+        cmdPark.setOnClickListener(v -> confirmCommand(VesperaCommandClient.Command.PARK));
+        cmdStop = action(activity.getString(R.string.telescope_btn_stop), UiStyle.INK);
+        cmdStop.setOnClickListener(v -> confirmCommand(VesperaCommandClient.Command.STOP));
         cmdResume = action(activity.getString(R.string.telescope_btn_resume), UiStyle.STEEL_BLUE);
-        cmdResume.setOnClickListener(v -> runCommand(VesperaCommandClient.Command.RESUME));
+        cmdResume.setOnClickListener(v -> confirmCommand(VesperaCommandClient.Command.RESUME));
         cmdInit = action(activity.getString(R.string.telescope_btn_init), UiStyle.GREEN);
-        cmdInit.setOnClickListener(v -> runCommand(VesperaCommandClient.Command.INIT));
+        cmdInit.setOnClickListener(v -> confirmCommand(VesperaCommandClient.Command.INIT));
         cmdShutdown = action(activity.getString(R.string.telescope_btn_shutdown), UiStyle.ROSE);
         cmdShutdown.setOnClickListener(v -> confirmShutdown());
         LinearLayout.LayoutParams shutdownLp =
@@ -200,6 +200,7 @@ final class TelescopePanel {
         mainHandler.removeCallbacks(autoRefresh);
         worker.shutdownNow();
         liveWorker.shutdownNow();
+        dismissPowerWarning(false);
     }
 
     private void scheduleAutoRefresh() {
@@ -325,6 +326,7 @@ final class TelescopePanel {
         fillStatusRows(snap);
         if (updated != null) lastUpdate.setText(updated);
         scroll.post(() -> scroll.scrollTo(x, y));
+        maybeSyncIfStorageFull(snap);
     }
 
     private void setStatusMessage(String status, String updated) {
@@ -376,7 +378,7 @@ final class TelescopePanel {
         addStatusRow(activity.getString(R.string.status_tab_field_temperature), snap.temperature);
         addStatusRow(activity.getString(R.string.status_tab_field_firmware), snap.firmware);
         addStatusRow(activity.getString(R.string.status_tab_field_error), snap.error);
-        addStatusRow(activity.getString(R.string.status_tab_field_storage), snap.storage);
+        addStatusRow(activity.getString(R.string.status_tab_field_storage), storageLabel(snap));
         if (snap.batteryPercent >= 0) {
             String battery = snap.batteryPercent + "%";
             if (!snap.batteryStatus.isEmpty()) {
@@ -389,6 +391,24 @@ final class TelescopePanel {
             if (compact.length() > 600) compact = compact.substring(0, 600) + "…";
             addStatusRow(activity.getString(R.string.status_tab_field_raw), compact);
         }
+    }
+
+    private String storageLabel(VesperaStatusSnapshot snap) {
+        if (snap.storageUsedPercent >= 80) {
+            String base = snap.storage.isEmpty()
+                    ? (snap.storageUsedPercent + "%") : snap.storage;
+            return activity.getString(R.string.status_tab_storage_full, base);
+        }
+        if (!snap.storage.isEmpty()) return snap.storage;
+        if (snap.storageUsedPercent >= 0) return snap.storageUsedPercent + "%";
+        return "—";
+    }
+
+    private void maybeSyncIfStorageFull(VesperaStatusSnapshot snap) {
+        if (snap == null || snap.storageUsedPercent < PhotoSyncService.STORAGE_SYNC_PERCENT) {
+            return;
+        }
+        PhotoSyncService.syncIfStorageHigh(activity, snap.storageUsedPercent);
     }
 
     private String observationLabel(VesperaStatusSnapshot snap) {
@@ -545,16 +565,51 @@ final class TelescopePanel {
         cmdResume.setVisibility(observing ? View.GONE : View.VISIBLE);
     }
 
+    private void confirmRefresh() {
+        confirmAction(R.string.telescope_btn_refresh_status,
+                R.string.telescope_confirm_refresh,
+                () -> refreshStatusNow(true));
+    }
+
+    private void confirmCommand(VesperaCommandClient.Command command) {
+        if (!isConnected()) {
+            commandResult.setText(activity.getString(R.string.status_tab_need_wifi));
+            return;
+        }
+        confirmAction(label(command), activity.getString(confirmMessage(command)),
+                () -> runCommand(command));
+    }
+
     private void confirmShutdown() {
         if (!isConnected()) {
             commandResult.setText(activity.getString(R.string.status_tab_need_wifi));
             return;
         }
+        confirmAction(activity.getString(R.string.telescope_shutdown_title),
+                activity.getString(R.string.telescope_shutdown_message),
+                () -> runCommand(VesperaCommandClient.Command.SHUTDOWN));
+    }
+
+    private int confirmMessage(VesperaCommandClient.Command command) {
+        switch (command) {
+            case PARK: return R.string.telescope_confirm_park;
+            case STOP: return R.string.telescope_confirm_stop;
+            case RESUME: return R.string.telescope_confirm_resume;
+            case INIT: return R.string.telescope_confirm_init;
+            case SHUTDOWN: return R.string.telescope_shutdown_message;
+            default: return R.string.telescope_confirm_generic;
+        }
+    }
+
+    private void confirmAction(int titleRes, int messageRes, Runnable onConfirm) {
+        confirmAction(activity.getString(titleRes), activity.getString(messageRes), onConfirm);
+    }
+
+    private void confirmAction(String title, String message, Runnable onConfirm) {
         new AlertDialog.Builder(activity)
-                .setTitle(R.string.telescope_shutdown_title)
-                .setMessage(R.string.telescope_shutdown_message)
-                .setPositiveButton(R.string.telescope_btn_shutdown,
-                        (d, w) -> runCommand(VesperaCommandClient.Command.SHUTDOWN))
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton(R.string.telescope_confirm_ok, (d, w) -> onConfirm.run())
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
     }

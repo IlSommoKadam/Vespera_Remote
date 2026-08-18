@@ -26,6 +26,8 @@ final class VesperaStatusSnapshot {
     final String temperature;
     final String error;
     final String storage;
+    /** Occupied internal storage percent, or -1 if unknown. */
+    final int storageUsedPercent;
     final String location;
     final String focus;
     final String rawJson;
@@ -36,7 +38,8 @@ final class VesperaStatusSnapshot {
             long exposureMicroSec, int gain, int batteryPercent, String batteryStatus,
             String challenge, int bootCount, String tracking, String motors,
             String step, String coordinates, String firmware, String filter, String temperature,
-            String error, String storage, String location, String focus, String rawJson) {
+            String error, String storage, int storageUsedPercent, String location, String focus,
+            String rawJson) {
         this.endpoint = endpoint == null ? "" : endpoint;
         this.telescopeId = telescopeId == null ? "" : telescopeId;
         this.model = model == null ? "" : model;
@@ -61,6 +64,7 @@ final class VesperaStatusSnapshot {
         this.temperature = temperature == null ? "" : temperature;
         this.error = error == null ? "" : error;
         this.storage = storage == null ? "" : storage;
+        this.storageUsedPercent = storageUsedPercent;
         this.location = location == null ? "" : location;
         this.focus = focus == null ? "" : focus;
         this.rawJson = rawJson == null ? "" : rawJson;

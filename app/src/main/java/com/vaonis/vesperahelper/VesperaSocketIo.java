@@ -147,6 +147,10 @@ final class VesperaSocketIo {
             }
             if (!(payload instanceof JSONObject)) return;
             String eventName = name instanceof String ? (String) name : "event";
+            if (!"STATUS_UPDATED".equals(eventName) && !"status".equalsIgnoreCase(eventName)) {
+                Log.d(TAG, eventName);
+                return;
+            }
             String endpoint = host + ":" + PORT + " " + eventName;
             VesperaStatusSnapshot snap = VesperaStatusClient.parse(
                     endpoint, payload.toString());

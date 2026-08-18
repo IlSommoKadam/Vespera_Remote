@@ -115,8 +115,7 @@ final class VesperaStatusClient {
             bootCount = findInt(root, 0, "bootCount", "boot_count", "nbBoot", "bootNumber");
         }
         boolean initialized = findBoolean(body, "initialized") || findBoolean(root, "initialized");
-        JSONObject operation = directObject(body, "operation");
-        if (operation == null) operation = directObject(root, "operation");
+        JSONObject operation = currentOperationOf(body, root);
         JSONObject lastObservation = lastObservationOf(body, root, operation);
         VesperaLastTarget.rememberFromStatus(body);
         VesperaLastTarget.rememberFromStatus(root);
@@ -128,8 +127,16 @@ final class VesperaStatusClient {
         int gain = -1;
         JSONObject details = operation != null ? operation : lastObservation;
         JSONObject targetObj = details == null ? null : details.optJSONObject("target");
+        if (targetObj == null && details != null) targetObj = details.optJSONObject("object");
         if (targetObj == null && lastObservation != null) {
             targetObj = lastObservation.optJSONObject("target");
+        }
+        if (VesperaLastTarget.formatCoordinates(targetObj).isEmpty() && lastObservation != null) {
+            JSONObject fromLast = lastObservation.optJSONObject("target");
+            if (fromLast == null) fromLast = lastObservation.optJSONObject("object");
+            if (!VesperaLastTarget.formatCoordinates(fromLast).isEmpty()) {
+                targetObj = fromLast;
+            }
         }
         if (details != null) {
             if (targetObj != null) {
@@ -146,8 +153,14 @@ final class VesperaStatusClient {
                 stacking = capture.optInt("stackingCount", -1);
                 exposureUs = capture.optLong("exposureMicroSec", 0);
                 gain = capture.optInt("gain", -1);
+                JSONObject cam = capture.optJSONObject("cameraParams");
+                if (cam != null) {
+                    if (exposureUs <= 0) exposureUs = cam.optLong("exposureMicroSec", 0);
+                    if (gain <= 0) gain = cam.optInt("gain", -1);
+                }
             }
         }
+        VesperaLastTarget.remember(targetObj, lastObservation != null ? lastObservation : operation);
         String currentOpType = operation == null ? "" : text(operation, "type");
         if (!currentOpType.isEmpty()) operationType = currentOpType;
         int batteryPercent = -1;
@@ -166,18 +179,24 @@ final class VesperaStatusClient {
                 batteryStatus = plugged ? "CONNECTED" : "DISCONNECTED";
             }
         }
+        String tracking = parseTracking(body, root, operation, observationStatus);
+        StorageInfo storage = parseStorageInfo(body, root);
         Log.i(TAG, "parsed " + endpoint
                 + " id=" + telescopeId
                 + " challenge=" + (challenge.isEmpty() ? "missing" : (challenge.length() + "c"))
-                + " boot=" + bootCount);
+                + " boot=" + bootCount
+                + " op=" + operationType
+                + " obs=" + observationStatus
+                + " track=" + tracking
+                + " storage=" + (storage.usedPercent < 0 ? "?" : (storage.usedPercent + "%")));
         return new VesperaStatusSnapshot(endpoint, telescopeId, model, state, initialized,
                 operationType, observationStatus, targetName, Math.max(0, stacking), exposureUs,
                 Math.max(0, gain), batteryPercent, batteryStatus, challenge, bootCount,
-                parseTracking(body, root, operation, observationStatus), parseMotors(body, root),
+                tracking, parseMotors(body, root),
                 parseStep(operation), parseCoordinates(targetObj),
                 parseFirmware(body, root), parseFilter(body, root, details),
                 parseTemperature(body, root), parseError(body, root, operation, details),
-                parseStorage(body, root), parseLocation(body, root),
+                storage.label, storage.usedPercent, parseLocation(body, root),
                 parseFocus(body, root, operation), json);
     }
 
@@ -187,6 +206,23 @@ final class VesperaStatusClient {
 
     private static JSONObject directObject(JSONObject obj, String key) {
         return asJsonObject(obj == null ? null : obj.opt(key));
+    }
+
+    private static JSONObject currentOperationOf(JSONObject body, JSONObject root) {
+        JSONObject current = directObject(body, "currentOperation");
+        if (current == null) current = directObject(root, "currentOperation");
+        if (current == null) current = directObject(body, "operation");
+        if (current == null) current = directObject(root, "operation");
+        if (current != null) return current;
+        JSONArray others = body == null ? null : body.optJSONArray("otherCurrentOperations");
+        if (others == null && root != null) others = root.optJSONArray("otherCurrentOperations");
+        if (others != null) {
+            for (int i = 0; i < others.length(); i++) {
+                JSONObject item = others.optJSONObject(i);
+                if (item != null) return item;
+            }
+        }
+        return null;
     }
 
     private static JSONObject lastObservationOf(JSONObject body, JSONObject root,
@@ -199,23 +235,65 @@ final class VesperaStatusClient {
 
     private static JSONObject lastPreviousObservation(JSONObject payload) {
         if (payload == null) return null;
-        JSONArray previous = payload.optJSONArray("previousOperations");
-        if (previous == null) return null;
-        for (int i = previous.length() - 1; i >= 0; i--) {
-            JSONObject item = previous.optJSONObject(i);
-            if (looksLikeObservation(item)) return item;
+        Object raw = payload.opt("previousOperations");
+        JSONObject preferred = null;
+        JSONObject fallback = null;
+        if (raw instanceof JSONObject) {
+            JSONObject map = (JSONObject) raw;
+            JSONObject named = map.optJSONObject("observation");
+            if (looksLikeObservation(named)) {
+                if (isResumable(named)) return named;
+                preferred = named;
+            }
+            JSONArray names = map.names();
+            if (names != null) {
+                for (int i = 0; i < names.length(); i++) {
+                    JSONObject item = map.optJSONObject(names.optString(i));
+                    if (!looksLikeObservation(item) || item == named) continue;
+                    if (isResumable(item)) return item;
+                    fallback = item;
+                }
+            }
+            return preferred != null ? preferred : fallback;
         }
-        return null;
+        if (raw instanceof JSONArray) {
+            JSONArray previous = (JSONArray) raw;
+            for (int i = previous.length() - 1; i >= 0; i--) {
+                JSONObject item = previous.optJSONObject(i);
+                if (!looksLikeObservation(item)) continue;
+                if (isResumable(item)) return item;
+                fallback = item;
+            }
+        }
+        return fallback;
+    }
+
+    private static boolean isResumable(JSONObject op) {
+        String store = storeState(op);
+        return store.contains("TO_BE_RESUMABLE")
+                || (store.contains("RESUMABLE") && !store.contains("NON_"));
+    }
+
+    private static String storeState(JSONObject op) {
+        if (op == null) return "";
+        JSONObject store = op.optJSONObject("store");
+        String direct = text(store, "state");
+        if (!direct.isEmpty()) return direct.toUpperCase(java.util.Locale.US);
+        return text(op, "storeState").toUpperCase(java.util.Locale.US);
     }
 
     private static boolean looksLikeObservation(JSONObject op) {
         if (op == null) return false;
         String type = text(op, "type").toUpperCase(java.util.Locale.US);
+        if (type.contains("TRACK") || type.contains("GOTO") || type.contains("SLEW")
+                || type.contains("PARK") || type.contains("INIT")) {
+            return false;
+        }
         if (type.contains("OBSERV") || type.contains("MOSAIC") || type.contains("COVAL")
                 || type.contains("CAPTURE") || type.contains("IMAG")) {
             return true;
         }
-        return op.optJSONObject("target") != null;
+        return op.optJSONObject("target") != null && op.optJSONObject("capture") != null;
     }
 
     private static String observationStatusOf(JSONObject current, JSONObject last) {
@@ -229,21 +307,36 @@ final class VesperaStatusClient {
 
     private static boolean isActiveObservation(JSONObject op) {
         if (!looksLikeObservation(op)) return false;
+        if (hasEnded(op)) return false;
+        String store = storeState(op);
+        if (store.contains("NON_RESUMABLE")) return false;
         String status = operationPhase(op).toUpperCase(java.util.Locale.US);
-        if (status.isEmpty()) return true;
-        return !isStoppedPhase(status);
+        if (!status.isEmpty() && isStoppedPhase(status)) return false;
+        return true;
+    }
+
+    private static boolean hasEnded(JSONObject op) {
+        if (op == null) return false;
+        if (op.optBoolean("stopped", false)) return true;
+        return op.has("endTime") && !op.isNull("endTime");
     }
 
     private static String stoppedLabel(JSONObject op) {
         if (!looksLikeObservation(op)) return "";
+        String store = storeState(op);
+        if (!hasEnded(op)) {
+            if (store.contains("NON_RESUMABLE")) return "FINISHED";
+            return "";
+        }
+        if (isResumable(op)) return "STOPPED";
+        if (store.contains("NON_RESUMABLE") || store.contains("FINISH")) return "FINISHED";
         String phase = operationPhase(op);
         if (isStoppedPhase(phase)) {
             String upper = phase.toUpperCase(java.util.Locale.US);
             if (upper.contains("FINISH")) return "FINISHED";
-            if (upper.contains("ABORT") || upper.contains("CANCEL")) return "STOPPED";
             return "STOPPED";
         }
-        return "";
+        return "STOPPED";
     }
 
     private static String operationPhase(JSONObject op) {
@@ -262,36 +355,95 @@ final class VesperaStatusClient {
 
     private static String parseTracking(JSONObject body, JSONObject root, JSONObject operation,
             String observationStatus) {
+        String fromMotors = trackingFromMotors(body, root);
+        if (!fromMotors.isEmpty()) return fromMotors;
+        String fromStep = trackingFromSteps(operation);
+        if (!fromStep.isEmpty()) return fromStep;
+        String flagged = trackingFlag(body, root, operation);
+        if (!flagged.isEmpty()) return flagged;
+        String type = operation == null ? "" : text(operation, "type").toUpperCase(java.util.Locale.US);
+        if (type.contains("TRACK")) return "ON";
+        String state = firstNonEmpty(directText(body, "state"), directText(root, "state"))
+                .toUpperCase(java.util.Locale.US);
+        if (state.contains("TRACK")) return "ON";
         if ("STOPPED".equals(observationStatus) || "FINISHED".equals(observationStatus)) {
             return "OFF";
         }
-        String fromStep = trackingFromSteps(operation);
-        if (!fromStep.isEmpty()) return fromStep;
+        return "OFF";
+    }
+
+    private static String trackingFromMotors(JSONObject body, JSONObject root) {
+        JSONObject motors = findObject(body, "motors");
+        if (motors == null) motors = findObject(root, "motors");
+        if (motors == null) return "";
+        boolean starting = false;
+        String[] axes = {"AZ", "az", "azimuth", "ALT", "alt", "altitude"};
+        for (String key : axes) {
+            JSONObject axis = motors.optJSONObject(key);
+            if (axis == null) continue;
+            String state = text(axis, "state").toUpperCase(java.util.Locale.US);
+            if (state.contains("TRACK")) return "ON";
+            if (state.contains("START") || state.contains("MOVE") || state.contains("SLEW")
+                    || state.contains("GO")) {
+                starting = true;
+            }
+        }
+        return starting ? "STARTING" : "";
+    }
+
+    private static String trackingFlag(JSONObject body, JSONObject root, JSONObject operation) {
         if (explicitTrue(body, "tracking") || explicitTrue(root, "tracking")
                 || explicitTrue(operation, "tracking")) {
             return "ON";
         }
+        String named = firstNonEmpty(
+                trackingWord(body, "tracking", "trackingState", "trackingStatus"),
+                trackingWord(root, "tracking", "trackingState", "trackingStatus"),
+                trackingWord(operation, "tracking", "trackingState", "trackingStatus"));
+        if (!named.isEmpty()) return named;
         if (explicitFalse(body, "tracking") || explicitFalse(root, "tracking")
                 || explicitFalse(operation, "tracking")) {
             return "OFF";
         }
-        String type = operation == null ? "" : text(operation, "type").toUpperCase(java.util.Locale.US);
-        if (type.contains("TRACK")) return "ON";
-        return "OFF";
+        return "";
+    }
+
+    private static String trackingWord(JSONObject obj, String... keys) {
+        if (obj == null) return "";
+        for (String key : keys) {
+            String value = text(obj, key).toUpperCase(java.util.Locale.US);
+            if (value.isEmpty()) continue;
+            if ("TRUE".equals(value) || "ON".equals(value) || value.contains("TRACK")) return "ON";
+            if ("FALSE".equals(value) || "OFF".equals(value) || "IDLE".equals(value)
+                    || "STOP".equals(value)) {
+                return "OFF";
+            }
+        }
+        return "";
     }
 
     private static String trackingFromSteps(JSONObject operation) {
-        if (operation == null) return "";
-        JSONArray steps = operation.optJSONArray("steps");
+        return trackingFromSteps(operation == null ? null : operation.optJSONArray("steps"));
+    }
+
+    private static String trackingFromSteps(JSONArray steps) {
         if (steps == null) return "";
         String found = "";
         for (int i = 0; i < steps.length(); i++) {
             JSONObject step = steps.optJSONObject(i);
             if (step == null) continue;
+            String nested = trackingFromSteps(step.optJSONArray("steps"));
+            if (!nested.isEmpty()) found = nested;
             String type = text(step, "type").toUpperCase(java.util.Locale.US);
             if (!type.contains("TRACK")) continue;
+            String status = firstNonEmpty(text(step, "status"), text(step, "state"))
+                    .toUpperCase(java.util.Locale.US);
+            if (status.contains("FAIL") || status.contains("STOP") || status.contains("IDLE")) {
+                continue;
+            }
             double progress = step.optDouble("progress", -1);
-            found = (progress >= 0 && progress < 1.0) ? "STARTING" : "ON";
+            found = (progress >= 0 && progress < 1.0) || status.contains("START")
+                    ? "STARTING" : "ON";
         }
         return found;
     }
@@ -368,14 +520,7 @@ final class VesperaStatusClient {
     }
 
     private static String parseCoordinates(JSONObject target) {
-        if (target == null || !target.has("ra")) return "";
-        try {
-            double ra = target.getDouble("ra");
-            double dec = target.has("de") ? target.getDouble("de") : target.getDouble("dec");
-            return String.format(java.util.Locale.US, "RA %.3f  ·  Dec %.3f", ra, dec);
-        } catch (Exception ignored) {
-            return "";
-        }
+        return VesperaLastTarget.formatCoordinates(target);
     }
 
     private static String parseFirmware(JSONObject body, JSONObject root) {
@@ -390,16 +535,19 @@ final class VesperaStatusClient {
                 text(obj, "firmwareVersion"),
                 text(obj, "softwareVersion"),
                 text(obj, "fwVersion"),
-                text(obj, "apiVersion"),
                 text(obj, "version"));
         if (!direct.isEmpty()) return direct;
         JSONObject nested = firstObject(obj, "software", "firmware", "device", "info", "system");
-        return nested == null ? "" : firstNonEmpty(
-                text(nested, "firmwareVersion"),
-                text(nested, "softwareVersion"),
-                text(nested, "fwVersion"),
-                text(nested, "apiVersion"),
-                text(nested, "version"));
+        if (nested != null) {
+            String fromNested = firstNonEmpty(
+                    text(nested, "firmwareVersion"),
+                    text(nested, "softwareVersion"),
+                    text(nested, "fwVersion"),
+                    text(nested, "version"));
+            if (!fromNested.isEmpty()) return fromNested;
+        }
+        return firstNonEmpty(text(obj, "apiVersion"),
+                nested == null ? "" : text(nested, "apiVersion"));
     }
 
     private static String parseFilter(JSONObject body, JSONObject root, JSONObject details) {
@@ -515,24 +663,158 @@ final class VesperaStatusClient {
         return "";
     }
 
-    private static String parseStorage(JSONObject body, JSONObject root) {
-        String found = storageOf(body);
-        if (found.isEmpty()) found = storageOf(root);
-        return found;
+    private static final class StorageInfo {
+        final String label;
+        final int usedPercent;
+
+        StorageInfo(String label, int usedPercent) {
+            this.label = label == null ? "" : label;
+            this.usedPercent = usedPercent;
+        }
     }
 
-    private static String storageOf(JSONObject obj) {
-        if (obj == null) return "";
-        String[] keys = {
+    private static StorageInfo parseStorageInfo(JSONObject body, JSONObject root) {
+        String[] nestedKeys = {
+                "photos", "user", "userStorage", "pictures", "media",
+                "internal", "internalMemory", "internalStorage", "emmc", "flash",
                 "storage", "sdCard", "diskSpace", "availableStorage", "disk", "memory"
         };
-        for (String key : keys) {
-            String formatted = formatStorage(obj.opt(key));
-            if (!formatted.isEmpty()) return formatted;
+        StorageInfo best = StorageInfoEmpty();
+        JSONObject[] roots = { body, root };
+        for (JSONObject src : roots) {
+            if (src == null) continue;
+            for (String key : nestedKeys) {
+                StorageInfo candidate = storageFrom(findObject(src, key));
+                best = preferStorage(best, candidate);
+            }
+            best = preferStorage(best, topLevelSpace(src));
         }
-        long free = firstLong(obj, "freeSpace", "availableSpace", "freeBytes");
-        long total = firstLong(obj, "totalSpace", "totalBytes", "capacity");
-        return formatFreeTotal(free, total);
+        return best;
+    }
+
+    private static StorageInfo StorageInfoEmpty() {
+        return new StorageInfo("", -1);
+    }
+
+    private static StorageInfo preferStorage(StorageInfo current, StorageInfo candidate) {
+        if (candidate == null || (candidate.label.isEmpty() && candidate.usedPercent < 0)) {
+            return current == null ? StorageInfoEmpty() : current;
+        }
+        if (current == null || (current.label.isEmpty() && current.usedPercent < 0)) {
+            return candidate;
+        }
+        if (current.usedPercent < 0 && candidate.usedPercent >= 0) return candidate;
+        return current;
+    }
+
+    private static StorageInfo topLevelSpace(JSONObject obj) {
+        if (obj == null) return StorageInfoEmpty();
+        long used = rawLong(obj, "usedSpace", "usedBytes", "usedMemory");
+        long free = rawLong(obj, "freeSpace", "availableSpace", "freeBytes");
+        long total = rawLong(obj, "totalSpace", "totalBytes", "capacity");
+        int percent = parsePercent(obj);
+        used = toBytes(used);
+        free = toBytes(free);
+        total = toBytes(total);
+        if (used < 0 && free >= 0 && total > free) used = total - free;
+        if (total < 0 && used >= 0 && free >= 0) total = used + free;
+        if (percent < 0 && used >= 0 && total > 0) {
+            percent = (int) Math.round(100.0 * used / (double) total);
+        }
+        if (percent > 100) percent = 100;
+        String label = formatStorageLabel(percent, used, free, total);
+        if (label.isEmpty() && percent >= 0) label = percent + "%";
+        return new StorageInfo(label, percent);
+    }
+
+    private static StorageInfo storageFrom(JSONObject obj) {
+        if (obj == null) return StorageInfoEmpty();
+        JSONObject nested = firstObject(obj, "photos", "user", "userStorage", "pictures", "media",
+                "internal", "internalMemory", "internalStorage", "emmc", "flash");
+        if (nested != null && nested != obj) {
+            StorageInfo nestedInfo = storageFromObject(nested);
+            if (nestedInfo.usedPercent >= 0 || !nestedInfo.label.isEmpty()) return nestedInfo;
+        }
+        return storageFromObject(obj);
+    }
+
+    private static StorageInfo storageFromObject(JSONObject obj) {
+        if (obj == null) return StorageInfoEmpty();
+        long used = rawLong(obj, "used", "usedSpace", "usedBytes", "usedMemory",
+                "occupied", "usage", "usedSize");
+        long free = rawLong(obj, "free", "freeSpace", "available", "availableSpace",
+                "freeBytes", "remaining", "availableSize");
+        long total = rawLong(obj, "total", "totalSpace", "capacity", "totalBytes",
+                "size", "totalSize", "totalMemory");
+        int percent = parsePercent(obj);
+        used = toBytes(used);
+        free = toBytes(free);
+        total = toBytes(total);
+        if (used < 0 && free >= 0 && total > free) used = total - free;
+        if (total < 0 && used >= 0 && free >= 0) total = used + free;
+        if (percent < 0 && used >= 0 && total > 0) {
+            percent = (int) Math.round(100.0 * used / (double) total);
+        }
+        if (percent > 100) percent = 100;
+        String label = formatStorageLabel(percent, used, free, total);
+        if (label.isEmpty() && percent >= 0) label = percent + "%";
+        return new StorageInfo(label, percent);
+    }
+
+    private static int parsePercent(JSONObject obj) {
+        double value = rawDouble(obj, "usedPercent", "percentUsed", "usagePercent",
+                "usedPercentage", "occupancy", "percent");
+        if (Double.isNaN(value) || value < 0) return -1;
+        if (value <= 1.0) value *= 100.0;
+        if (value > 100) return -1;
+        return (int) Math.round(value);
+    }
+
+    private static String formatStorageLabel(int percent, long used, long free, long total) {
+        if (percent >= 0 && used >= 0 && total > 0) {
+            return percent + "%  ·  " + formatBytes(used) + " / " + formatBytes(total);
+        }
+        if (percent >= 0 && free >= 0 && total > 0) {
+            return percent + "%  ·  " + formatBytes(free) + " / " + formatBytes(total);
+        }
+        if (percent >= 0) return percent + "%";
+        if (used >= 0 && total > 0) return formatBytes(used) + " / " + formatBytes(total);
+        if (free >= 0 && total > 0) return formatBytes(free) + " / " + formatBytes(total);
+        if (free >= 0) return formatBytes(free);
+        if (total > 0) return formatBytes(total);
+        return "";
+    }
+
+    private static long toBytes(long value) {
+        if (value < 0) return -1;
+        if (value == 0) return 0;
+        if (value <= 64) return value * 1024L * 1024L * 1024L;
+        if (value <= 512_000L) return value * 1024L * 1024L;
+        return value;
+    }
+
+    private static long rawLong(JSONObject obj, String... keys) {
+        double value = rawDouble(obj, keys);
+        if (Double.isNaN(value)) return -1;
+        return Math.round(value);
+    }
+
+    private static double rawDouble(JSONObject obj, String... keys) {
+        if (obj == null) return Double.NaN;
+        for (String key : keys) {
+            if (!obj.has(key) || obj.isNull(key)) continue;
+            Object value = obj.opt(key);
+            if (value instanceof Number) return ((Number) value).doubleValue();
+            if (value instanceof String) {
+                String text = ((String) value).trim().replace("%", "").replace(",", ".");
+                if (text.isEmpty()) continue;
+                try {
+                    return Double.parseDouble(text);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return Double.NaN;
     }
 
     private static String parseLocation(JSONObject body, JSONObject root) {
@@ -610,52 +892,11 @@ final class VesperaStatusClient {
         return "";
     }
 
-    private static String formatStorage(Object value) {
-        if (value == null || value == JSONObject.NULL) return "";
-        if (value instanceof Number) {
-            long bytes = ((Number) value).longValue();
-            return bytes > 1024 ? formatBytes(bytes) : "";
-        }
-        if (value instanceof JSONObject) {
-            JSONObject obj = (JSONObject) value;
-            long free = firstLong(obj, "free", "freeSpace", "available", "availableSpace",
-                    "freeBytes", "remaining");
-            long total = firstLong(obj, "total", "totalSpace", "capacity", "totalBytes", "size");
-            String pair = formatFreeTotal(free, total);
-            if (!pair.isEmpty()) return pair;
-            String text = firstNonEmpty(
-                    text(obj, "status"),
-                    text(obj, "state"),
-                    text(obj, "name"));
-            return text;
-        }
-        String text = String.valueOf(value).trim();
-        return text.isEmpty() || "null".equalsIgnoreCase(text) ? "" : text;
-    }
-
-    private static String formatFreeTotal(long free, long total) {
-        if (free <= 0 && total <= 0) return "";
-        if (free > 0 && total > 0) return formatBytes(free) + " / " + formatBytes(total);
-        if (free > 0) return formatBytes(free);
-        return formatBytes(total);
-    }
-
     private static String formatBytes(long bytes) {
         double gb = bytes / (1024.0 * 1024.0 * 1024.0);
         if (gb >= 1) return String.format(java.util.Locale.US, "%.1f GB", gb);
         double mb = bytes / (1024.0 * 1024.0);
         return String.format(java.util.Locale.US, "%.0f MB", mb);
-    }
-
-    private static long firstLong(JSONObject obj, String... keys) {
-        if (obj == null) return 0;
-        for (String key : keys) {
-            if (obj.has(key) && !obj.isNull(key)) {
-                long value = obj.optLong(key, 0);
-                if (value > 0) return value;
-            }
-        }
-        return 0;
     }
 
     private static String motorPos(JSONObject motors, String... keys) {
