@@ -79,6 +79,8 @@ final class VesperaStatusClient {
         JSONObject root = new JSONObject(json);
         JSONObject payload = unwrap(root);
         String telescopeId = text(payload, "telescopeId");
+        String challenge = text(payload, "challenge");
+        int bootCount = payload.optInt("bootCount", payload.optInt("boot_count", 0));
         String model = text(payload, "model");
         String state = text(payload, "state");
         boolean initialized = payload.optBoolean("initialized", false);
@@ -114,7 +116,16 @@ final class VesperaStatusClient {
         }
         return new VesperaStatusSnapshot(endpoint, telescopeId, model, state, initialized,
                 operationType, targetName, Math.max(0, stacking), exposureUs,
-                Math.max(0, gain), batteryPercent, batteryStatus, json);
+                Math.max(0, gain), batteryPercent, batteryStatus, challenge, bootCount, json);
+    }
+
+    /** REST status merged with Socket.IO challenge when needed for API commands. */
+    static VesperaStatusSnapshot fetchForAuth(String host, int preferredPort, Network network) {
+        VesperaStatusSnapshot snap = fetch(host, preferredPort, network);
+        if (snap == null) return null;
+        if (snap.hasAuthFields()) return snap;
+        VesperaStatusSnapshot socket = VesperaSocketChallenge.fetch(host, 8083, network);
+        return socket != null ? snap.withAuthFrom(socket) : snap;
     }
 
     private static JSONObject unwrap(JSONObject root) {

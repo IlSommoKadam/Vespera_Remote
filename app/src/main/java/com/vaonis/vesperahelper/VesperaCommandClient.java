@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * Sends Vespera REST commands directly (no Singularity app).
- * Control endpoints may return 401 without API auth (phase 2).
+ * Authenticated commands use Ed25519 challenge-response (phase 2).
  */
 final class VesperaCommandClient {
     private static final String TAG = "VesperaCmd";
@@ -46,9 +46,28 @@ final class VesperaCommandClient {
     private VesperaCommandClient() {}
 
     static Result send(String host, int apiPort, Network network, Command command) {
+        return send(host, apiPort, network, command, null);
+    }
+
+    static Result send(String host, int apiPort, Network network, Command command,
+            VesperaStatusSnapshot statusForAuth) {
         if (host == null || host.isEmpty()) host = "10.0.0.1";
         int port = apiPort > 0 ? apiPort : 8082;
         if (port == 8083) port = 8082;
+
+        VesperaStatusSnapshot authStatus = statusForAuth;
+        if (authStatus != null && !authStatus.hasAuthFields()) {
+            authStatus = VesperaStatusClient.fetchForAuth(host, port, network);
+            if (authStatus != null && statusForAuth != null) {
+                authStatus = statusForAuth.withAuthFrom(authStatus);
+            }
+        }
+        String authHeader = VesperaApiAuth.buildHeader(authStatus);
+        if (authHeader == null && authStatus == null) {
+            authStatus = VesperaStatusClient.fetchForAuth(host, port, network);
+            authHeader = VesperaApiAuth.buildHeader(authStatus);
+        }
+
         HttpURLConnection conn = null;
         try {
             URL url = new URL("http://" + host + ":" + port + command.path);
@@ -61,6 +80,9 @@ final class VesperaCommandClient {
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setRequestProperty("Accept", "application/json");
+            if (authHeader != null) {
+                conn.setRequestProperty("Authorization", authHeader);
+            }
             byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
             try (OutputStream out = conn.getOutputStream()) {
                 out.write(body);
@@ -69,7 +91,10 @@ final class VesperaCommandClient {
             String response = readBody(conn, code);
             boolean ok = code >= 200 && code < 300;
             if (!ok && code == 401) {
-                return new Result(false, code, "auth_required");
+                if (authHeader == null) {
+                    return new Result(false, code, "auth_challenge_missing");
+                }
+                return new Result(false, code, "auth_rejected");
             }
             String msg = response.isEmpty() ? ("HTTP " + code) : truncate(response, 200);
             return new Result(ok, code, msg);

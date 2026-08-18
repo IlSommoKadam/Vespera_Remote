@@ -41,6 +41,7 @@ final class TelescopePanel {
     private boolean visible;
     private String host = "10.0.0.1";
     private int apiPort = -1;
+    private volatile VesperaStatusSnapshot lastSnapshot;
 
     TelescopePanel(Activity activity, float density, int padding) {
         this.activity = activity;
@@ -183,7 +184,9 @@ final class TelescopePanel {
                 refreshStatus.setEnabled(true);
                 if (snap == null) {
                     instrumentBlock.setText(activity.getString(R.string.status_tab_api_unavailable));
+                    lastSnapshot = null;
                 } else {
+                    lastSnapshot = snap;
                     instrumentBlock.setText(formatInstrument(snap));
                 }
                 String when = DateFormat.getTimeInstance(DateFormat.MEDIUM, Locale.getDefault())
@@ -204,9 +207,10 @@ final class TelescopePanel {
         final String fetchHost = host;
         final int fetchPort = resolveApiPort();
         final Network network = VesperaConnectionService.getActiveNetwork();
+        final VesperaStatusSnapshot authSnap = lastSnapshot;
         worker.execute(() -> {
             VesperaCommandClient.Result result = VesperaCommandClient.send(
-                    fetchHost, fetchPort, network, command);
+                    fetchHost, fetchPort, network, command, authSnap);
             mainHandler.post(() -> {
                 commandInFlight.set(false);
                 setCommandsEnabled(true);
@@ -214,8 +218,11 @@ final class TelescopePanel {
                     commandResult.setText(activity.getString(
                             R.string.telescope_command_ok, label(command), result.message));
                     if (visible) refreshStatusNow(true);
-                } else if ("auth_required".equals(result.message)) {
-                    commandResult.setText(activity.getString(R.string.telescope_command_auth));
+                } else if ("auth_challenge_missing".equals(result.message)) {
+                    commandResult.setText(activity.getString(R.string.telescope_command_auth_challenge));
+                } else if ("auth_rejected".equals(result.message)
+                        || "auth_required".equals(result.message)) {
+                    commandResult.setText(activity.getString(R.string.telescope_command_auth_fail));
                 } else {
                     commandResult.setText(activity.getString(
                             R.string.telescope_command_fail, label(command), result.message));

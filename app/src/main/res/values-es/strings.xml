@@ -152,7 +152,7 @@
     <string name="telescope_tab_title">Monitor del telescopio</string>
     <string name="telescope_section_status">Estado del instrumento</string>
     <string name="telescope_section_commands">Comandos directos</string>
-    <string name="telescope_commands_hint">Sin abrir Singularity. Park / Stop / Init usan la API REST; si el firmware responde 401 hará falta autenticación (fase 2). La planificación de sesiones sigue en Singularity.</string>
+    <string name="telescope_commands_hint">Sin abrir Singularity. Park / Stop / Init usan la API REST con autenticación Ed25519. La planificación de sesiones sigue en Singularity.</string>
     <string name="telescope_btn_refresh_status">Actualizar estado</string>
     <string name="telescope_btn_scan_ports">Escanear todos los puertos</string>
     <string name="telescope_btn_park">Aparcar brazo</string>
@@ -161,7 +161,8 @@
     <string name="telescope_command_running">Enviando comando…</string>
     <string name="telescope_command_ok">%1$s: OK — %2$s</string>
     <string name="telescope_command_fail">%1$s: error — %2$s</string>
-    <string name="telescope_command_auth">El telescopio requiere autenticación API (fase 2). Usa Singularity por ahora.</string>
+    <string name="telescope_command_auth_challenge">Challenge API no disponible: actualiza el estado o reintenta en unos segundos.</string>
+    <string name="telescope_command_auth_fail">El telescopio rechazó la autenticación API (HTTP 401).</string>
     <string name="status_tab_title">Estado Vespera</string>
     <string name="status_tab_infra">Infraestructura</string>
     <string name="status_tab_instrument">Instrumento (API REST)</string>
