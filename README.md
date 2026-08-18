@@ -40,8 +40,7 @@ L'app mantiene una richiesta Wi-Fi generica e chiede al daemon root `tools/vespe
 | 0.6.20 | 67 | Al riavvio app: ripresa automatica dei trasferimenti sospesi/in pausa |
 | 0.6.21 | 68 | Un solo daemon (init, niente secondo wrapper); restart senza smontare l’HD; bind ripristinato se manca; sync foto automatica 24h ogni 2 h |
 | 0.6.22 | 69 | Tab **Stato**: infrastruttura (Wi‑Fi, API, FTP, Singularity) + lettura REST `/v1`/`/v2/app/status` con aggiornamento ogni 15 s |
-| 0.6.23 | 70 | **Fase 1 porte**: inventario completo FTP+API in tab Wi‑Fi; cartella USER con porta reale in Foto/HD; tab **Telescopio** (stato + comandi Park/Stop/Init senza Singularity) |
-| 0.6.24 | 71 | Release su `main`: tab Telescopio + inventario porte (fase 1) |
+| 0.6.25 | 72 | Tab **Telescopio** + inventario porte fase 1; auto-refresh stato solo con tab Telescopio attiva |
 
 Il daemon deve essere avviato come root sul Pi dopo il boot; l'app comunica con esso tramite `net.req` / `disk.req` nella propria directory esterna.
 

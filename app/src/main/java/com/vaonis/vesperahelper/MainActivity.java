@@ -499,7 +499,7 @@ public final class MainActivity extends Activity {
     }
 
     private void notifyTelescopePanel() {
-        if (telescopePanel == null) return;
+        if (telescopePanel == null || currentTab != TAB_TELESCOPE) return;
         syncTelescopePanelHost();
         telescopePanel.onConnectionChanged();
     }
@@ -1255,6 +1255,10 @@ public final class MainActivity extends Activity {
         }
         refreshVesperaScan();
         if (photoPanel != null && currentTab == TAB_PHOTOS) photoPanel.onResume();
+        if (telescopePanel != null && currentTab == TAB_TELESCOPE) {
+            syncTelescopePanelHost();
+            telescopePanel.onVisible();
+        }
     }
 
     @Override protected void onDestroy() {
@@ -1283,7 +1287,7 @@ public final class MainActivity extends Activity {
             instrumentStatusReceiverRegistered = false;
         }
         if (photoPanel != null && currentTab == TAB_PHOTOS) photoPanel.onPause();
-        if (telescopePanel != null) telescopePanel.onHidden();
+        if (telescopePanel != null && currentTab == TAB_TELESCOPE) telescopePanel.onHidden();
         super.onPause();
     }
 }

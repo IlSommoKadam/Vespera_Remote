@@ -66,7 +66,7 @@ final class TelescopePanel {
         lastUpdate.setTextSize(12);
         refreshStatus = action(activity.getString(R.string.telescope_btn_refresh_status),
                 UiStyle.SLATE);
-        refreshStatus.setOnClickListener(v -> refreshStatusNow());
+        refreshStatus.setOnClickListener(v -> refreshStatusNow(true));
 
         layout.addView(instrumentBlock);
         layout.addView(lastUpdate);
@@ -114,9 +114,8 @@ final class TelescopePanel {
 
     void onVisible() {
         visible = true;
-        refreshStatusNow();
-        mainHandler.removeCallbacks(autoRefresh);
-        mainHandler.postDelayed(autoRefresh, AUTO_REFRESH_MS);
+        refreshStatusNow(true);
+        scheduleAutoRefresh();
     }
 
     void onHidden() {
@@ -124,21 +123,32 @@ final class TelescopePanel {
         mainHandler.removeCallbacks(autoRefresh);
     }
 
+    boolean isTabActive() {
+        return visible;
+    }
+
     void onConnectionChanged() {
         if (visible) {
-            refreshStatusNow();
+            refreshStatusNow(true);
         }
     }
 
     void shutdown() {
+        visible = false;
         mainHandler.removeCallbacks(autoRefresh);
         worker.shutdownNow();
     }
 
+    private void scheduleAutoRefresh() {
+        mainHandler.removeCallbacks(autoRefresh);
+        if (!visible) return;
+        mainHandler.postDelayed(autoRefresh, AUTO_REFRESH_MS);
+    }
+
     private void refreshStatusIfVisible() {
         if (!visible) return;
-        refreshStatusNow();
-        mainHandler.postDelayed(autoRefresh, AUTO_REFRESH_MS);
+        refreshStatusNow(true);
+        scheduleAutoRefresh();
     }
 
     private void requestPortScan() {
@@ -147,8 +157,10 @@ final class TelescopePanel {
         }
     }
 
-    private void refreshStatusNow() {
+    private void refreshStatusNow(boolean force) {
+        if (!force && !visible) return;
         if (!isConnected()) {
+            if (!visible) return;
             instrumentBlock.setText(activity.getString(R.string.status_tab_need_wifi));
             lastUpdate.setText("");
             setCommandsEnabled(false);
@@ -164,6 +176,10 @@ final class TelescopePanel {
             VesperaStatusSnapshot snap = VesperaStatusClient.fetch(fetchHost, fetchPort, network);
             mainHandler.post(() -> {
                 fetchInFlight.set(false);
+                if (!visible) {
+                    refreshStatus.setEnabled(isConnected());
+                    return;
+                }
                 refreshStatus.setEnabled(true);
                 if (snap == null) {
                     instrumentBlock.setText(activity.getString(R.string.status_tab_api_unavailable));
@@ -197,7 +213,7 @@ final class TelescopePanel {
                 if (result.success) {
                     commandResult.setText(activity.getString(
                             R.string.telescope_command_ok, label(command), result.message));
-                    refreshStatusNow();
+                    if (visible) refreshStatusNow(true);
                 } else if ("auth_required".equals(result.message)) {
                     commandResult.setText(activity.getString(R.string.telescope_command_auth));
                 } else {
