@@ -5,11 +5,15 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.net.Network;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -17,6 +21,9 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Builds and refreshes the Foto tab (USB HD + all-day FTP sync). */
 final class PhotoPanel {
@@ -40,7 +47,15 @@ final class PhotoPanel {
     private final Button eject;
     private final TextView ejectSafe;
     private final TextView syncWindow;
-    private final EditText intervalInput;
+    private final EditText dayIntervalInput;
+    private final EditText nightIntervalInput;
+    private final EditText dayStartHourInput;
+    private final EditText dayEndHourInput;
+    private final EditText cityInput;
+    private final LinearLayout cityResults;
+    private final Button citySearch;
+    private final Button vesperaLocation;
+    private final TextView locationStatus;
     private final Button applyInterval;
     private final TextView syncStatus;
     private final Button syncNow;
@@ -49,6 +64,8 @@ final class PhotoPanel {
     private final TextView overlayHint;
     private final TextView ftpStatus;
     private final TextView ftpHint;
+    private final ExecutorService geoWorker = Executors.newSingleThreadExecutor();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private boolean receiverRegistered;
     private String selectedId = "";
     private boolean mounted;
@@ -113,41 +130,182 @@ final class PhotoPanel {
         diskList.setOrientation(LinearLayout.VERTICAL);
 
         TextView syncTitle = title(activity.getString(R.string.photo_section_sync));
+        syncTitle.setPadding(0, 0, 0, (int) (4 * density));
         syncWindow = body(windowText());
-        LinearLayout intervalRow = new LinearLayout(activity);
-        intervalRow.setOrientation(LinearLayout.HORIZONTAL);
-        intervalRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        TextView intervalLabel = body(activity.getString(R.string.photo_sync_interval_label));
-        intervalLabel.setPadding(0, 0, (int) (8 * density), 0);
-        intervalInput = new EditText(activity);
-        intervalInput.setHint(R.string.photo_sync_interval_hint);
-        intervalInput.setText(PhotoSyncStore.formatIntervalHours(syncStore.intervalHours()));
-        intervalInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
+        applyInterval = action(activity.getString(R.string.photo_sync_interval_apply), COLOR_CONNECTING);
+        applyInterval.setOnClickListener(v -> applyInterval());
+
+        LinearLayout dayIntervalRow = new LinearLayout(activity);
+        dayIntervalRow.setOrientation(LinearLayout.HORIZONTAL);
+        dayIntervalRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        TextView dayIntervalLabel = body(activity.getString(R.string.photo_sync_day_interval_label));
+        dayIntervalLabel.setPadding(0, 0, (int) (8 * density), 0);
+        dayIntervalInput = new EditText(activity);
+        dayIntervalInput.setHint(R.string.photo_sync_interval_hint);
+        dayIntervalInput.setText(PhotoSyncStore.formatIntervalHours(syncStore.dayIntervalHours()));
+        dayIntervalInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
                 | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        intervalInput.setSingleLine(true);
-        intervalInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
-        intervalInput.setEms(4);
+        dayIntervalInput.setSingleLine(true);
+        dayIntervalInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        dayIntervalInput.setEms(4);
         LinearLayout.LayoutParams intervalLp = new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        intervalInput.setLayoutParams(intervalLp);
+        dayIntervalInput.setLayoutParams(intervalLp);
         TextView intervalUnit = body(activity.getString(R.string.photo_sync_interval_unit));
         intervalUnit.setPadding((int) (8 * density), 0, (int) (8 * density), 0);
-        applyInterval = action(activity.getString(R.string.photo_sync_interval_apply), COLOR_CONNECTING);
-        LinearLayout.LayoutParams applyLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        applyInterval.setLayoutParams(applyLp);
-        applyInterval.setOnClickListener(v -> applyInterval());
-        intervalInput.setOnEditorActionListener((v, actionId, event) -> {
+        dayIntervalInput.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_DONE) {
                 applyInterval();
                 return true;
             }
             return false;
         });
-        intervalRow.addView(intervalLabel);
-        intervalRow.addView(intervalInput);
-        intervalRow.addView(intervalUnit);
-        intervalRow.addView(applyInterval);
+        dayIntervalRow.addView(dayIntervalLabel);
+        dayIntervalRow.addView(dayIntervalInput);
+        dayIntervalRow.addView(intervalUnit);
+
+        LinearLayout nightIntervalRow = new LinearLayout(activity);
+        nightIntervalRow.setOrientation(LinearLayout.HORIZONTAL);
+        nightIntervalRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        TextView nightIntervalLabel = body(activity.getString(R.string.photo_sync_night_interval_label));
+        nightIntervalLabel.setPadding(0, 0, (int) (8 * density), 0);
+        nightIntervalInput = new EditText(activity);
+        nightIntervalInput.setHint(R.string.photo_sync_interval_hint);
+        nightIntervalInput.setText(PhotoSyncStore.formatIntervalHours(syncStore.nightIntervalHours()));
+        nightIntervalInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
+                | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        nightIntervalInput.setSingleLine(true);
+        nightIntervalInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        nightIntervalInput.setEms(4);
+        nightIntervalInput.setLayoutParams(intervalLp);
+        TextView intervalUnit2 = body(activity.getString(R.string.photo_sync_interval_unit));
+        intervalUnit2.setPadding((int) (8 * density), 0, (int) (8 * density), 0);
+        nightIntervalInput.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                applyInterval();
+                return true;
+            }
+            return false;
+        });
+        nightIntervalRow.addView(nightIntervalLabel);
+        nightIntervalRow.addView(nightIntervalInput);
+        nightIntervalRow.addView(intervalUnit2);
+
+        LinearLayout dayStartRow = new LinearLayout(activity);
+        dayStartRow.setOrientation(LinearLayout.HORIZONTAL);
+        dayStartRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        TextView dayStartLabel = body(activity.getString(R.string.photo_sync_day_start_label));
+        dayStartLabel.setPadding(0, 0, (int) (8 * density), 0);
+        dayStartHourInput = new EditText(activity);
+        dayStartHourInput.setHint("10");
+        dayStartHourInput.setText(String.valueOf(syncStore.dayStartHour()));
+        dayStartHourInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        dayStartHourInput.setSingleLine(true);
+        dayStartHourInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        dayStartHourInput.setEms(3);
+        dayStartHourInput.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        TextView hourUnit = body(activity.getString(R.string.photo_sync_hour_unit));
+        hourUnit.setPadding((int) (8 * density), 0, (int) (8 * density), 0);
+        dayStartHourInput.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                applyInterval();
+                return true;
+            }
+            return false;
+        });
+        dayStartRow.addView(dayStartLabel);
+        dayStartRow.addView(dayStartHourInput);
+        dayStartRow.addView(hourUnit);
+
+        LinearLayout dayEndRow = new LinearLayout(activity);
+        dayEndRow.setOrientation(LinearLayout.HORIZONTAL);
+        dayEndRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        TextView dayEndLabel = body(activity.getString(R.string.photo_sync_day_end_label));
+        dayEndLabel.setPadding(0, 0, (int) (8 * density), 0);
+        dayEndHourInput = new EditText(activity);
+        dayEndHourInput.setHint("19");
+        dayEndHourInput.setText(String.valueOf(syncStore.dayEndHour()));
+        dayEndHourInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        dayEndHourInput.setSingleLine(true);
+        dayEndHourInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        dayEndHourInput.setEms(3);
+        dayEndHourInput.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        TextView hourUnit2 = body(activity.getString(R.string.photo_sync_hour_unit));
+        hourUnit2.setPadding((int) (8 * density), 0, (int) (8 * density), 0);
+        dayEndHourInput.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                applyInterval();
+                return true;
+            }
+            return false;
+        });
+        dayEndRow.addView(dayEndLabel);
+        dayEndRow.addView(dayEndHourInput);
+        dayEndRow.addView(hourUnit2);
+
+        TextView cityLabel = body(activity.getString(R.string.photo_sync_city_label));
+        LinearLayout cityRow = new LinearLayout(activity);
+        cityRow.setOrientation(LinearLayout.HORIZONTAL);
+        cityRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        cityInput = new EditText(activity);
+        cityInput.setHint(R.string.photo_sync_city_hint);
+        cityInput.setSingleLine(true);
+        cityInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        cityInput.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        if (syncStore.hasSite() && PhotoSyncStore.SITE_CITY.equals(syncStore.siteSource())) {
+            cityInput.setText(syncStore.siteLabel());
+        }
+        cityInput.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                searchCity();
+                return true;
+            }
+            return false;
+        });
+        citySearch = new Button(activity);
+        citySearch.setAllCaps(false);
+        citySearch.setText(R.string.photo_sync_city_search);
+        UiStyle.applyRaised(citySearch, COLOR_CONNECTING, true);
+        LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        searchLp.setMarginStart((int) (8 * density));
+        citySearch.setLayoutParams(searchLp);
+        citySearch.setOnClickListener(v -> searchCity());
+        cityRow.addView(cityInput);
+        cityRow.addView(citySearch);
+        cityResults = new LinearLayout(activity);
+        cityResults.setOrientation(LinearLayout.VERTICAL);
+        vesperaLocation = action(activity.getString(R.string.photo_sync_vespera_location), COLOR_CONNECTING);
+        vesperaLocation.setOnClickListener(v -> fetchVesperaSite());
+        locationStatus = body(locationText());
+        locationStatus.setTextSize(13);
+
+        LinearLayout syncBox = new LinearLayout(activity);
+        syncBox.setOrientation(LinearLayout.VERTICAL);
+        int boxPad = (int) (12 * density);
+        syncBox.setPadding(boxPad, boxPad, boxPad, (int) (6 * density));
+        syncBox.setBackground(UiStyle.sectionPanel(density));
+        LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        boxLp.topMargin = (int) (6 * density);
+        boxLp.bottomMargin = (int) (10 * density);
+        syncBox.setLayoutParams(boxLp);
+        syncBox.addView(syncTitle);
+        syncBox.addView(syncWindow);
+        syncBox.addView(dayIntervalRow);
+        syncBox.addView(nightIntervalRow);
+        syncBox.addView(dayStartRow);
+        syncBox.addView(dayEndRow);
+        syncBox.addView(cityLabel);
+        syncBox.addView(cityRow);
+        syncBox.addView(cityResults);
+        syncBox.addView(vesperaLocation);
+        syncBox.addView(locationStatus);
+        syncBox.addView(applyInterval);
+
         syncStatus = body(activity.getString(R.string.photo_sync_idle));
         syncNow = action(activity.getString(R.string.photo_btn_sync_now), COLOR_CONNECTED);
         syncNow.setOnClickListener(v -> PhotoSyncService.syncNow(activity));
@@ -173,9 +331,7 @@ final class PhotoPanel {
         layout.addView(eject);
         layout.addView(ejectSafe);
         layout.addView(diskList);
-        layout.addView(syncTitle);
-        layout.addView(syncWindow);
-        layout.addView(intervalRow);
+        layout.addView(syncBox);
         layout.addView(syncStatus);
         layout.addView(syncNow);
         layout.addView(continueSync);
@@ -254,6 +410,8 @@ final class PhotoPanel {
             if (disks != null) bindDisks(PhotoSyncService.parseDisks(disks));
             savedLabel.setText(savedText());
             syncWindow.setText(windowText());
+            refreshHourFields();
+            locationStatus.setText(locationText());
             refreshMountButtons();
             boolean paused = intent.getBooleanExtra(PhotoSyncService.EXTRA_PAUSED, false);
             boolean syncing = intent.getBooleanExtra(PhotoSyncService.EXTRA_SYNCING, false);
@@ -343,17 +501,175 @@ final class PhotoPanel {
     }
 
     private void applyInterval() {
-        float hours = PhotoSyncStore.parseIntervalHours(intervalInput.getText().toString());
-        syncStore.setIntervalHours(hours);
-        intervalInput.setText(PhotoSyncStore.formatIntervalHours(hours));
+        float dayHours = PhotoSyncStore.parseIntervalHours(dayIntervalInput.getText().toString());
+        float nightHours = PhotoSyncStore.parseIntervalHours(nightIntervalInput.getText().toString());
+        int dayStart = parseHour(dayStartHourInput.getText().toString(), syncStore.dayStartHour());
+        int dayEnd = parseHour(dayEndHourInput.getText().toString(), syncStore.dayEndHour());
+        boolean hoursEdited = dayStart != syncStore.dayStartHour() || dayEnd != syncStore.dayEndHour();
+
+        syncStore.setDayIntervalHours(dayHours);
+        syncStore.setNightIntervalHours(nightHours);
+        if (hoursEdited) {
+            syncStore.setAutoHours(false);
+            syncStore.setDayStartHour(dayStart);
+            syncStore.setDayEndHour(dayEnd);
+        }
+
+        dayIntervalInput.setText(PhotoSyncStore.formatIntervalHours(dayHours));
+        nightIntervalInput.setText(PhotoSyncStore.formatIntervalHours(nightHours));
+        refreshHourFields();
+        locationStatus.setText(locationText());
+
         syncWindow.setText(windowText());
         activity.startForegroundService(new Intent(activity, PhotoSyncService.class)
                 .setAction(PhotoSyncService.ACTION_LIST_DISKS));
     }
 
+    private void searchCity() {
+        hideKeyboard(cityInput);
+        final String query = cityInput.getText() == null ? "" : cityInput.getText().toString().trim();
+        cityResults.removeAllViews();
+        if (query.length() < 2) {
+            locationStatus.setText(R.string.photo_sync_city_none);
+            return;
+        }
+        locationStatus.setText(R.string.photo_sync_city_searching);
+        citySearch.setEnabled(false);
+        final String language = AppLocale.getLanguage(activity);
+        geoWorker.execute(() -> {
+            try {
+                final List<CityGeocoder.Hit> hits = CityGeocoder.search(query, language);
+                mainHandler.post(() -> {
+                    citySearch.setEnabled(true);
+                    bindCityHits(hits);
+                });
+            } catch (Exception failure) {
+                mainHandler.post(() -> {
+                    citySearch.setEnabled(true);
+                    cityResults.removeAllViews();
+                    locationStatus.setText(R.string.photo_sync_city_error);
+                });
+            }
+        });
+    }
+
+    private void bindCityHits(List<CityGeocoder.Hit> hits) {
+        cityResults.removeAllViews();
+        if (hits == null || hits.isEmpty()) {
+            locationStatus.setText(R.string.photo_sync_city_none);
+            return;
+        }
+        locationStatus.setText(locationText());
+        for (CityGeocoder.Hit hit : hits) {
+            Button row = new Button(activity);
+            row.setAllCaps(false);
+            row.setGravity(android.view.Gravity.START | android.view.Gravity.CENTER_VERTICAL);
+            row.setText(hit.label);
+            UiStyle.applyRaised(row, UiStyle.SLATE, true);
+            row.setOnClickListener(v -> applySite(hit.lat, hit.lon, hit.label,
+                    PhotoSyncStore.SITE_CITY, hit.countryCode));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            lp.bottomMargin = (int) (4 * density);
+            row.setLayoutParams(lp);
+            cityResults.addView(row);
+        }
+    }
+
+    private void fetchVesperaSite() {
+        if (!VesperaConnectionService.STATUS_CONNECTED.equals(
+                VesperaConnectionService.getLastStatus())) {
+            locationStatus.setText(R.string.photo_sync_vespera_need);
+            return;
+        }
+        locationStatus.setText(R.string.photo_sync_vespera_reading);
+        vesperaLocation.setEnabled(false);
+        final Network network = VesperaConnectionService.getActiveNetwork();
+        geoWorker.execute(() -> {
+            final VesperaLocationClient.Site site = VesperaLocationClient.fetch(network);
+            mainHandler.post(() -> {
+                vesperaLocation.setEnabled(true);
+                if (site == null) {
+                    locationStatus.setText(R.string.photo_sync_vespera_fail);
+                    return;
+                }
+                String label = activity.getString(R.string.photo_sync_vespera_ok, site.lat, site.lon);
+                applySite(site.lat, site.lon, label, PhotoSyncStore.SITE_VESPERA, "");
+            });
+        });
+    }
+
+    private void applySite(double lat, double lon, String label, String source, String countryCode) {
+        locationStatus.setText(R.string.photo_sync_clock_syncing);
+        geoWorker.execute(() -> {
+            syncStore.setSite(lat, lon, label, source, countryCode);
+            mainHandler.post(() -> {
+                cityResults.removeAllViews();
+                if (PhotoSyncStore.SITE_CITY.equals(source)) {
+                    cityInput.setText(label);
+                }
+                activity.startForegroundService(new Intent(activity, PhotoSyncService.class)
+                        .setAction(PhotoSyncService.ACTION_SYNC_CLOCK));
+            });
+        });
+    }
+
+    private void refreshHourFields() {
+        if (!dayStartHourInput.hasFocus()) {
+            dayStartHourInput.setText(String.valueOf(syncStore.dayStartHour()));
+        }
+        if (!dayEndHourInput.hasFocus()) {
+            dayEndHourInput.setText(String.valueOf(syncStore.dayEndHour()));
+        }
+    }
+
+    private String locationText() {
+        if (syncStore.autoHours()) {
+            String label = syncStore.siteLabel();
+            if (label == null || label.isEmpty()) {
+                label = String.format(Locale.US, "%.2f, %.2f",
+                        syncStore.siteLat(), syncStore.siteLon());
+            }
+            String auto = activity.getString(R.string.photo_sync_location_auto,
+                    label, syncStore.dayEndHour(), syncStore.dayStartHour());
+            String tz = syncStore.siteTimeZone();
+            if (tz != null && !tz.isEmpty()) {
+                auto += "\n" + activity.getString(R.string.photo_sync_clock_tz, tz);
+            }
+            auto += "\n" + activity.getString(syncStore.lastNtpOk()
+                    ? R.string.photo_sync_clock_ok : R.string.photo_sync_clock_pending);
+            return auto;
+        }
+        if (syncStore.hasSite()) {
+            return activity.getString(R.string.photo_sync_location_manual);
+        }
+        return activity.getString(R.string.photo_sync_location_unset);
+    }
+
+    private void hideKeyboard(View view) {
+        InputMethodManager imm = activity.getSystemService(InputMethodManager.class);
+        if (imm != null && view != null) {
+            imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+        }
+    }
+
     private String windowText() {
         return activity.getString(R.string.photo_sync_interval_help,
-                PhotoSyncStore.formatIntervalHours(syncStore.intervalHours()));
+                PhotoSyncStore.formatIntervalHours(syncStore.dayIntervalHours()),
+                syncStore.dayStartHour(),
+                syncStore.dayEndHour(),
+                PhotoSyncStore.formatIntervalHours(syncStore.nightIntervalHours()));
+    }
+
+    private static int parseHour(String raw, int fallback) {
+        try {
+            String t = raw == null ? "" : raw.trim();
+            if (t.isEmpty()) return fallback;
+            // Accept "10", "11", "12" (and also "7") as integers.
+            return Integer.parseInt(t);
+        } catch (Exception ignored) {
+            return fallback;
+        }
     }
 
     private String savedText() {

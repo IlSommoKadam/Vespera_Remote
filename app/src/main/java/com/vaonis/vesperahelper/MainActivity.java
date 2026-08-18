@@ -70,7 +70,6 @@ public final class MainActivity extends Activity {
     private Button refresh;
     private Button connect;
     private Button disconnect;
-    private Button verify;
     private Button checkInstrument;
     private Button restartSingularity;
     private TextView actionResult;
@@ -84,7 +83,6 @@ public final class MainActivity extends Activity {
     private Button tabPhotos;
     private Button tabTelescope;
     private ScrollView wifiScroll;
-    private TextView portInventory;
     private TelescopePanel telescopePanel;
     private PhotoPanel photoPanel;
     private int currentTab = TAB_WIFI;
@@ -137,8 +135,8 @@ public final class MainActivity extends Activity {
                         || VesperaConnectionService.STATUS_UNAVAILABLE.equals(connectionStatus)) {
                     lastDetectedApiPort = -1;
                     VesperaPortScanner.clear();
-                    if (portInventory != null) {
-                        portInventory.setText(R.string.port_inventory_idle);
+                    if (telescopePanel != null) {
+                        telescopePanel.clearPortInventory();
                     }
                     cancelPortVerification();
                     stopWatchdog();
@@ -345,10 +343,6 @@ public final class MainActivity extends Activity {
         portInput.setText("8083");
         portInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         portInput.setSingleLine(true);
-        verify = new Button(this);
-        verify.setText(R.string.btn_verify);
-        verify.setOnClickListener(v -> verifyApiPorts(false));
-        styleRaisedButton(verify, COLOR_ACTION, true);
         checkInstrument = new Button(this);
         checkInstrument.setText(R.string.btn_check_instrument);
         checkInstrument.setOnClickListener(v -> requestInstrumentCheck());
@@ -359,11 +353,6 @@ public final class MainActivity extends Activity {
         styleRaisedButton(restartSingularity, UiStyle.TERRACOTTA, true);
         actionResult = new TextView(this);
         actionResult.setText(R.string.action_result_idle);
-        portInventory = new TextView(this);
-        portInventory.setText(R.string.port_inventory_idle);
-        portInventory.setTextSize(13);
-        UiStyle.applyRecessed(portInventory, 0xFFECEFF1);
-        UiStyle.spaceBelow(portInventory, density);
         refreshConnectButtons();
         layout.addView(status);
         layout.addView(connectionInfo);
@@ -397,8 +386,6 @@ public final class MainActivity extends Activity {
         layout.addView(disconnect);
         layout.addView(hostInput);
         layout.addView(portInput);
-        layout.addView(verify);
-        layout.addView(portInventory);
         layout.addView(checkInstrument);
         layout.addView(restartSingularity);
         layout.addView(actionResult);
@@ -410,7 +397,6 @@ public final class MainActivity extends Activity {
         });
 
         telescopePanel = new TelescopePanel(this, density, padding);
-        telescopePanel.setPortScanListener(() -> verifyApiPorts(false));
         photoPanel = new PhotoPanel(this, density, padding);
 
         root.addView(header);
@@ -424,42 +410,66 @@ public final class MainActivity extends Activity {
     }
 
     private LinearLayout buildTabBar(float density) {
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setBackgroundColor(0xFFE8EEF4);
+        int outerPad = (int) (8 * density);
+        wrap.setPadding(outerPad, (int) (4 * density), outerPad, outerPad);
+        wrap.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         LinearLayout tabBar = new LinearLayout(this);
         tabBar.setOrientation(LinearLayout.HORIZONTAL);
-        tabBar.setBackgroundColor(0xFFE8EEF4);
-        int tabPad = (int) (6 * density);
-        tabBar.setPadding(tabPad, 0, tabPad, tabPad);
+        tabBar.setBackground(UiStyle.tabStripWell(density));
+        int inset = Math.max(2, (int) (2 * density));
+        tabBar.setPadding(inset, inset, inset, inset);
         tabBar.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         tabWifi = new Button(this);
         tabWifi.setAllCaps(false);
+        tabWifi.setGravity(Gravity.CENTER);
         tabWifi.setText(R.string.tab_wifi);
         tabWifi.setOnClickListener(v -> showTab(TAB_WIFI));
         tabPhotos = new Button(this);
         tabPhotos.setAllCaps(false);
+        tabPhotos.setGravity(Gravity.CENTER);
         tabPhotos.setText(R.string.tab_photos);
         tabPhotos.setOnClickListener(v -> showTab(TAB_PHOTOS));
         tabTelescope = new Button(this);
         tabTelescope.setAllCaps(false);
+        tabTelescope.setGravity(Gravity.CENTER);
         tabTelescope.setText(R.string.tab_telescope);
         tabTelescope.setOnClickListener(v -> showTab(TAB_TELESCOPE));
 
         LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        tabLp.setMarginEnd((int) (4 * density));
         tabWifi.setLayoutParams(tabLp);
         LinearLayout.LayoutParams tabLp2 = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        tabLp2.setMarginEnd((int) (4 * density));
         tabPhotos.setLayoutParams(tabLp2);
         LinearLayout.LayoutParams tabLp3 = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         tabTelescope.setLayoutParams(tabLp3);
         tabBar.addView(tabWifi);
+        tabBar.addView(tabDivider(density));
         tabBar.addView(tabPhotos);
+        tabBar.addView(tabDivider(density));
         tabBar.addView(tabTelescope);
-        return tabBar;
+        wrap.addView(tabBar);
+        return wrap;
+    }
+
+    private View tabDivider(float density) {
+        View line = new View(this);
+        line.setBackgroundColor(UiStyle.TAB_DIVIDER);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                Math.max(2, Math.round(2 * density)), ViewGroup.LayoutParams.MATCH_PARENT);
+        int v = Math.round(8 * density);
+        lp.topMargin = v;
+        lp.bottomMargin = v;
+        line.setLayoutParams(lp);
+        return line;
     }
 
     private void showTab(int tab) {
@@ -479,9 +489,9 @@ public final class MainActivity extends Activity {
         if (telescopePanel != null) {
             telescopePanel.view().setVisibility(tab == TAB_TELESCOPE ? View.VISIBLE : View.GONE);
         }
-        styleTab(tabWifi, tab == TAB_WIFI);
-        styleTab(tabPhotos, tab == TAB_PHOTOS);
-        styleTab(tabTelescope, tab == TAB_TELESCOPE);
+        styleTab(tabWifi, tab == TAB_WIFI, true, false);
+        styleTab(tabPhotos, tab == TAB_PHOTOS, false, false);
+        styleTab(tabTelescope, tab == TAB_TELESCOPE, false, true);
         if (tab == TAB_PHOTOS && photoPanel != null) {
             photoPanel.onResume();
         } else if (tab == TAB_TELESCOPE && telescopePanel != null) {
@@ -505,17 +515,19 @@ public final class MainActivity extends Activity {
     }
 
     private void updatePortInventoryUi(VesperaPortScan scan) {
-        if (portInventory == null) return;
-        portInventory.setText(VesperaPortInventory.formatFull(this, scan));
+        if (telescopePanel != null) {
+            telescopePanel.updatePortInventory(scan);
+        }
         if (photoPanel != null) {
             photoPanel.refreshUserFolderHint();
         }
     }
 
-    private void styleTab(Button tab, boolean selected) {
+    private void styleTab(Button tab, boolean selected, boolean roundLeft, boolean roundRight) {
         if (tab == null) return;
         tab.setAllCaps(false);
-        styleRaisedButton(tab, selected ? COLOR_CONNECTED : UiStyle.SLATE_MUTED, true);
+        tab.setGravity(Gravity.CENTER);
+        UiStyle.applyTab(tab, COLOR_CONNECTED, selected, roundLeft, roundRight);
         tab.setTypeface(tab.getTypeface(), selected
                 ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
     }
@@ -862,6 +874,9 @@ public final class MainActivity extends Activity {
         if (!isVesperaConnected()) {
             actionResult.setText(getString(R.string.action_result,
                     getString(R.string.no_vespera_network)));
+            if (telescopePanel != null) {
+                telescopePanel.clearPortInventory();
+            }
             return;
         }
         if (portDiscoveryRunning) {
@@ -871,6 +886,9 @@ public final class MainActivity extends Activity {
         portDiscoveryRunning = true;
         final int generation = ++verifyGeneration;
         actionResult.setText(R.string.port_scan_running);
+        if (telescopePanel != null) {
+            telescopePanel.showPortScanRunning();
+        }
         VesperaConnectionService.requestDaemonRoute(this);
         final String host = hostInput.getText().toString().trim().isEmpty()
                 ? "10.0.0.1" : hostInput.getText().toString().trim();
@@ -1084,8 +1102,8 @@ public final class MainActivity extends Activity {
         connectRequested = false;
         lastDetectedApiPort = -1;
         VesperaPortScanner.clear();
-        if (portInventory != null) {
-            portInventory.setText(R.string.port_inventory_idle);
+        if (telescopePanel != null) {
+            telescopePanel.clearPortInventory();
         }
         cancelPortVerification();
         stopWatchdog();

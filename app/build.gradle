@@ -2,19 +2,40 @@ plugins {
     id 'com.android.application'
 }
 
+def secrets = new Properties()
+def secretsFile = rootProject.file('secrets.properties')
+if (secretsFile.exists()) {
+    secretsFile.withInputStream { secrets.load(it) }
+}
+def ed25519PublicB64 = secrets.getProperty(
+        'VESPERA_ED25519_PUBLIC_B64',
+        'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=')
+def ed25519SecretB64 = secrets.getProperty(
+        'VESPERA_ED25519_SECRET_B64',
+        'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+
 android {
     namespace 'com.vaonis.vesperahelper'
     compileSdk 35
+
+    buildFeatures {
+        buildConfig true
+    }
 
     defaultConfig {
         applicationId 'com.vaonis.vesperahelper'
         minSdk 29
         targetSdk 35
-        versionCode 72
-        versionName '0.6.25'
+        versionCode 92
+        versionName '0.6.45'
+        buildConfigField 'String', 'VESPERA_ED25519_PUBLIC_B64',
+                '"' + ed25519PublicB64.replace('\\', '\\\\').replace('"', '\\"') + '"'
+        buildConfigField 'String', 'VESPERA_ED25519_SECRET_B64',
+                '"' + ed25519SecretB64.replace('\\', '\\\\').replace('"', '\\"') + '"'
     }
 }
 
 dependencies {
     implementation 'commons-net:commons-net:3.11.1'
+    implementation 'net.i2p.crypto:eddsa:0.3.0'
 }

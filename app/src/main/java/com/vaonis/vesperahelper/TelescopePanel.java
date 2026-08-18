@@ -1,9 +1,14 @@
 package com.vaonis.vesperahelper;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.net.Network;
 import android.os.Handler;
 import android.os.Looper;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.util.Log;
+import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -17,30 +22,38 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Tab Telescopio: stato strumento (REST) + comandi diretti senza Singularity. */
+/** Tab Telescopio: stato live Socket.IO 8083 + comandi REST 8082. */
 final class TelescopePanel {
-    private static final long AUTO_REFRESH_MS = 15_000;
+    private static final long AUTO_REFRESH_MS = 30_000;
 
     private final Activity activity;
     private final float density;
     private final ScrollView scroll;
-    private final TextView instrumentBlock;
+    private final LinearLayout statusBox;
     private final TextView commandResult;
     private final TextView lastUpdate;
+    private final TextView portInventory;
     private final Button refreshStatus;
-    private final Button scanPorts;
     private final Button cmdPark;
     private final Button cmdStop;
+    private final Button cmdResume;
     private final Button cmdInit;
+    private final Button cmdShutdown;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final ExecutorService liveWorker = Executors.newSingleThreadExecutor();
     private final AtomicBoolean fetchInFlight = new AtomicBoolean(false);
     private final AtomicBoolean commandInFlight = new AtomicBoolean(false);
+    private final AtomicBoolean liveRunning = new AtomicBoolean(false);
     private final Runnable autoRefresh = this::refreshStatusIfVisible;
-    private Runnable onPortScanRequested;
+    private VesperaSocketIo liveClient;
+    private volatile boolean liveOk;
     private boolean visible;
     private String host = "10.0.0.1";
     private int apiPort = -1;
+    private AlertDialog powerDialog;
+    private boolean powerWarningIgnoredThisVisit;
+    private boolean powerWarningAccepted;
 
     TelescopePanel(Activity activity, float density, int padding) {
         this.activity = activity;
@@ -61,14 +74,24 @@ final class TelescopePanel {
 
         layout.addView(title(activity.getString(R.string.telescope_tab_title)));
         layout.addView(section(activity.getString(R.string.telescope_section_status)));
-        instrumentBlock = body("—");
+        statusBox = new LinearLayout(activity);
+        statusBox.setOrientation(LinearLayout.VERTICAL);
+        int boxPad = Math.max(8, Math.round(10 * density));
+        statusBox.setPadding(boxPad, boxPad, boxPad, boxPad);
+        statusBox.setBackground(UiStyle.recessedStatus(0xFFECEFF1, density));
+        LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        boxLp.bottomMargin = (int) (8 * density);
+        statusBox.setLayoutParams(boxLp);
+        addStatusRow(activity.getString(R.string.status_tab_field_state), "—");
         lastUpdate = body("");
         lastUpdate.setTextSize(12);
         refreshStatus = action(activity.getString(R.string.telescope_btn_refresh_status),
                 UiStyle.SLATE);
         refreshStatus.setOnClickListener(v -> refreshStatusNow(true));
+        scroll.setDescendantFocusability(LinearLayout.FOCUS_BEFORE_DESCENDANTS);
 
-        layout.addView(instrumentBlock);
+        layout.addView(statusBox);
         layout.addView(lastUpdate);
         layout.addView(refreshStatus);
 
@@ -76,30 +99,38 @@ final class TelescopePanel {
         TextView cmdHint = body(activity.getString(R.string.telescope_commands_hint));
         cmdHint.setTextSize(13);
         layout.addView(cmdHint);
-        scanPorts = action(activity.getString(R.string.telescope_btn_scan_ports), UiStyle.SLATE);
-        scanPorts.setOnClickListener(v -> requestPortScan());
         cmdPark = action(activity.getString(R.string.telescope_btn_park), UiStyle.TERRACOTTA);
         cmdPark.setOnClickListener(v -> runCommand(VesperaCommandClient.Command.PARK));
         cmdStop = action(activity.getString(R.string.telescope_btn_stop), UiStyle.ROSE);
         cmdStop.setOnClickListener(v -> runCommand(VesperaCommandClient.Command.STOP));
+        cmdResume = action(activity.getString(R.string.telescope_btn_resume), UiStyle.STEEL_BLUE);
+        cmdResume.setOnClickListener(v -> runCommand(VesperaCommandClient.Command.RESUME));
         cmdInit = action(activity.getString(R.string.telescope_btn_init), UiStyle.GREEN);
         cmdInit.setOnClickListener(v -> runCommand(VesperaCommandClient.Command.INIT));
+        cmdShutdown = action(activity.getString(R.string.telescope_btn_shutdown), UiStyle.ROSE);
+        cmdShutdown.setOnClickListener(v -> confirmShutdown());
+        LinearLayout.LayoutParams shutdownLp =
+                (LinearLayout.LayoutParams) cmdShutdown.getLayoutParams();
+        shutdownLp.topMargin = (int) (8 * density);
+        cmdShutdown.setLayoutParams(shutdownLp);
         commandResult = body("");
         commandResult.setTextColor(UiStyle.SLATE);
-        layout.addView(scanPorts);
         layout.addView(cmdPark);
         layout.addView(cmdStop);
+        layout.addView(cmdResume);
         layout.addView(cmdInit);
+        layout.addView(cmdShutdown);
         layout.addView(commandResult);
+        layout.addView(section(activity.getString(R.string.telescope_section_ports)));
+        portInventory = body(activity.getString(R.string.port_inventory_idle));
+        portInventory.setTextSize(13);
+        layout.addView(portInventory);
         scroll.addView(layout);
+        updateObservationButtons(false);
     }
 
     View view() {
         return scroll;
-    }
-
-    void setPortScanListener(Runnable listener) {
-        onPortScanRequested = listener;
     }
 
     void setHost(String host) {
@@ -113,14 +144,20 @@ final class TelescopePanel {
     }
 
     void onVisible() {
+        boolean alreadyVisible = visible;
         visible = true;
-        refreshStatusNow(true);
+        powerWarningIgnoredThisVisit = false;
+        refreshPortInventory();
+        refreshStatusNow(!alreadyVisible);
+        startLive();
         scheduleAutoRefresh();
     }
 
     void onHidden() {
         visible = false;
+        stopLive();
         mainHandler.removeCallbacks(autoRefresh);
+        dismissPowerWarning(false);
     }
 
     boolean isTabActive() {
@@ -128,15 +165,41 @@ final class TelescopePanel {
     }
 
     void onConnectionChanged() {
+        refreshPortInventory();
+        stopLive();
         if (visible) {
-            refreshStatusNow(true);
+            refreshStatusNow(false);
+            startLive();
+        }
+    }
+
+    void showPortScanRunning() {
+        portInventory.setText(activity.getString(R.string.port_scan_running));
+    }
+
+    void updatePortInventory(VesperaPortScan scan) {
+        portInventory.setText(VesperaPortInventory.formatFull(activity, scan));
+    }
+
+    void clearPortInventory() {
+        portInventory.setText(activity.getString(R.string.port_inventory_idle));
+    }
+
+    private void refreshPortInventory() {
+        VesperaPortScan scan = VesperaPortScanner.lastScan();
+        if (scan != null) {
+            updatePortInventory(scan);
+        } else {
+            clearPortInventory();
         }
     }
 
     void shutdown() {
         visible = false;
+        stopLive();
         mainHandler.removeCallbacks(autoRefresh);
         worker.shutdownNow();
+        liveWorker.shutdownNow();
     }
 
     private void scheduleAutoRefresh() {
@@ -147,50 +210,259 @@ final class TelescopePanel {
 
     private void refreshStatusIfVisible() {
         if (!visible) return;
-        refreshStatusNow(true);
+        if (!liveOk) refreshStatusNow(false);
         scheduleAutoRefresh();
     }
 
-    private void requestPortScan() {
-        if (onPortScanRequested != null) {
-            onPortScanRequested.run();
+    private void startLive() {
+        if (!visible || !isConnected()) {
+            stopLive();
+            return;
         }
+        if (!liveRunning.compareAndSet(false, true)) return;
+        liveOk = false;
+        final String fetchHost = host;
+        final Network network = VesperaConnectionService.getActiveNetwork();
+        liveClient = new VesperaSocketIo(new VesperaSocketIo.Listener() {
+            @Override
+            public void onStatus(VesperaStatusSnapshot snapshot) {
+                mainHandler.post(() -> applyLiveSnapshot(snapshot));
+            }
+
+            @Override
+            public void onInfo(String message) {
+                Log.d("VesperaSIO", message);
+            }
+
+            @Override
+            public void onError(String message) {
+                mainHandler.post(() -> {
+                    liveOk = false;
+                    if (visible && !fetchInFlight.get()) refreshStatusNow(false);
+                });
+            }
+        });
+        final VesperaSocketIo client = liveClient;
+        liveWorker.execute(() -> {
+            try {
+                client.run(fetchHost, network);
+            } finally {
+                if (liveClient == client) {
+                    liveRunning.set(false);
+                    liveOk = false;
+                }
+            }
+        });
     }
 
-    private void refreshStatusNow(boolean force) {
-        if (!force && !visible) return;
+    private void stopLive() {
+        liveOk = false;
+        VesperaSocketIo client = liveClient;
+        liveClient = null;
+        if (client != null) client.stop();
+        liveRunning.set(false);
+    }
+
+    private void applyLiveSnapshot(VesperaStatusSnapshot snapshot) {
+        if (!visible || snapshot == null) return;
+        liveOk = true;
+        setCommandsEnabled(true);
+        String when = DateFormat.getTimeInstance(DateFormat.MEDIUM, Locale.getDefault())
+                .format(new Date());
+        setStatusSnapshot(snapshot,
+                activity.getString(R.string.status_tab_last_update, when)
+                        + " · " + activity.getString(R.string.status_tab_live));
+        maybeShowPowerWarning(snapshot);
+        updateObservationButtons(snapshot.isObserving());
+    }
+
+    private void refreshStatusNow(boolean userInitiated) {
+        if (!visible && !userInitiated) return;
         if (!isConnected()) {
+            stopLive();
             if (!visible) return;
-            instrumentBlock.setText(activity.getString(R.string.status_tab_need_wifi));
-            lastUpdate.setText("");
+            setStatusMessage(activity.getString(R.string.status_tab_need_wifi), "");
             setCommandsEnabled(false);
             return;
         }
         setCommandsEnabled(true);
         if (!fetchInFlight.compareAndSet(false, true)) return;
-        refreshStatus.setEnabled(false);
+        if (userInitiated) {
+            refreshStatus.setEnabled(false);
+            setStatusMessage(activity.getString(R.string.status_tab_fetching),
+                    lastUpdate.getText().toString());
+        }
         final String fetchHost = host;
         final int fetchPort = resolveApiPort();
         final Network network = VesperaConnectionService.getActiveNetwork();
         worker.execute(() -> {
-            VesperaStatusSnapshot snap = VesperaStatusClient.fetch(fetchHost, fetchPort, network);
+            VesperaStatusClient.Result result = VesperaStatusClient.fetchResult(
+                    fetchHost, fetchPort, network);
             mainHandler.post(() -> {
                 fetchInFlight.set(false);
-                if (!visible) {
-                    refreshStatus.setEnabled(isConnected());
-                    return;
-                }
-                refreshStatus.setEnabled(true);
-                if (snap == null) {
-                    instrumentBlock.setText(activity.getString(R.string.status_tab_api_unavailable));
-                } else {
-                    instrumentBlock.setText(formatInstrument(snap));
-                }
+                refreshStatus.setEnabled(isConnected());
+                if (!visible) return;
                 String when = DateFormat.getTimeInstance(DateFormat.MEDIUM, Locale.getDefault())
                         .format(new Date());
-                lastUpdate.setText(activity.getString(R.string.status_tab_last_update, when));
+                if (result.snapshot == null) {
+                    setStatusMessage(formatUnavailable(result.error),
+                            activity.getString(R.string.status_tab_last_update, when));
+                } else {
+                    setStatusSnapshot(result.snapshot,
+                            activity.getString(R.string.status_tab_last_update, when));
+                    maybeShowPowerWarning(result.snapshot);
+                    updateObservationButtons(result.snapshot.isObserving());
+                }
             });
         });
+    }
+
+    /** Updates status without scrolling the tab back to the top. */
+    private void setStatusSnapshot(VesperaStatusSnapshot snap, String updated) {
+        final int x = scroll.getScrollX();
+        final int y = scroll.getScrollY();
+        statusBox.removeAllViews();
+        fillStatusRows(snap);
+        if (updated != null) lastUpdate.setText(updated);
+        scroll.post(() -> scroll.scrollTo(x, y));
+    }
+
+    private void setStatusMessage(String status, String updated) {
+        final int x = scroll.getScrollX();
+        final int y = scroll.getScrollY();
+        statusBox.removeAllViews();
+        addStatusMessage(status == null ? "—" : status);
+        if (updated != null) lastUpdate.setText(updated);
+        scroll.post(() -> scroll.scrollTo(x, y));
+    }
+
+    private void fillStatusRows(VesperaStatusSnapshot snap) {
+        addStatusRow(activity.getString(R.string.status_tab_field_state),
+                snap.state.isEmpty() ? "—" : snap.state);
+        addStatusRow(activity.getString(R.string.status_tab_field_initialized),
+                snap.initialized
+                        ? activity.getString(R.string.status_tab_yes)
+                        : activity.getString(R.string.status_tab_no));
+        addStatusRow(activity.getString(R.string.status_tab_field_observation),
+                observationLabel(snap));
+        addStatusRow(activity.getString(R.string.status_tab_field_operation), snap.operationType);
+        addStatusRow(activity.getString(R.string.status_tab_field_step), snap.step);
+        addStatusRow(activity.getString(R.string.status_tab_field_tracking),
+                trackingLabel(snap.tracking));
+        addStatusRow(activity.getString(R.string.status_tab_field_motors), snap.motors);
+        addStatusRow(activity.getString(R.string.status_tab_field_focus), snap.focus);
+        if (!snap.targetName.isEmpty()) {
+            addStatusRow(activity.getString(R.string.status_tab_field_target), snap.targetName);
+        } else if (VesperaLastTarget.hasTarget() && !VesperaLastTarget.label().isEmpty()) {
+            addStatusRow(activity.getString(R.string.status_tab_field_last_target),
+                    VesperaLastTarget.label());
+        }
+        addStatusRow(activity.getString(R.string.status_tab_field_coordinates), snap.coordinates);
+        addStatusRow(activity.getString(R.string.status_tab_field_location), snap.location);
+        if (snap.stackingCount > 0) {
+            addStatusRow(activity.getString(R.string.status_tab_field_stacking),
+                    String.valueOf(snap.stackingCount));
+        }
+        if (snap.exposureMicroSec > 0) {
+            double sec = snap.exposureMicroSec / 1_000_000.0;
+            addStatusRow(activity.getString(R.string.status_tab_field_exposure),
+                    String.format(Locale.US, "%.1f s", sec));
+        }
+        if (snap.gain > 0) {
+            addStatusRow(activity.getString(R.string.status_tab_field_gain),
+                    String.valueOf(snap.gain));
+        }
+        addStatusRow(activity.getString(R.string.status_tab_field_filter), snap.filter);
+        addStatusRow(activity.getString(R.string.status_tab_field_temperature), snap.temperature);
+        addStatusRow(activity.getString(R.string.status_tab_field_firmware), snap.firmware);
+        addStatusRow(activity.getString(R.string.status_tab_field_error), snap.error);
+        addStatusRow(activity.getString(R.string.status_tab_field_storage), snap.storage);
+        if (snap.batteryPercent >= 0) {
+            String battery = snap.batteryPercent + "%";
+            if (!snap.batteryStatus.isEmpty()) {
+                battery += " (" + snap.batteryStatus + ")";
+            }
+            addStatusRow(activity.getString(R.string.status_tab_field_battery), battery);
+        }
+        if (!snap.hasInstrumentFields()) {
+            String compact = snap.rawJson;
+            if (compact.length() > 600) compact = compact.substring(0, 600) + "…";
+            addStatusRow(activity.getString(R.string.status_tab_field_raw), compact);
+        }
+    }
+
+    private String observationLabel(VesperaStatusSnapshot snap) {
+        if ("RUNNING".equals(snap.observationStatus)) {
+            return activity.getString(R.string.status_tab_observation_running);
+        }
+        if ("FINISHED".equals(snap.observationStatus)) {
+            return activity.getString(R.string.status_tab_observation_finished);
+        }
+        if ("STOPPED".equals(snap.observationStatus) || snap.canResumeObservation()) {
+            return activity.getString(R.string.status_tab_observation_stopped);
+        }
+        return "";
+    }
+
+    private String trackingLabel(String tracking) {
+        if ("ON".equals(tracking)) return activity.getString(R.string.status_tab_tracking_on);
+        if ("STARTING".equals(tracking)) {
+            return activity.getString(R.string.status_tab_tracking_starting);
+        }
+        return activity.getString(R.string.status_tab_tracking_off);
+    }
+
+    private void addStatusRow(String label, String value) {
+        if (value == null || value.isEmpty()) return;
+        LinearLayout row = new LinearLayout(activity);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        int padH = Math.max(8, Math.round(8 * density));
+        int padV = Math.max(6, Math.round(6 * density));
+        row.setPadding(padH, padV, padH, padV);
+        GradientDrawable chip = new GradientDrawable();
+        chip.setColor(0xFFF7FAFC);
+        chip.setCornerRadius(Math.round(6 * density));
+        row.setBackground(chip);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rowLp.bottomMargin = Math.max(4, Math.round(4 * density));
+        row.setLayoutParams(rowLp);
+
+        int labelWidth = Math.round(152 * density);
+        TextView name = statusCell(label, 0xFF546E7A, false);
+        name.setLayoutParams(new LinearLayout.LayoutParams(labelWidth,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        name.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        TextView colon = statusCell(" : ", 0xFF546E7A, false);
+        colon.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        TextView state = statusCell(value, 0xFF1A237E, true);
+        LinearLayout.LayoutParams stateLp = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        state.setLayoutParams(stateLp);
+        state.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        row.addView(name);
+        row.addView(colon);
+        row.addView(state);
+        statusBox.addView(row);
+    }
+
+    private void addStatusMessage(String message) {
+        TextView view = statusCell(message, 0xFF37474F, false);
+        view.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        statusBox.addView(view);
+    }
+
+    private TextView statusCell(String text, int color, boolean emphasize) {
+        TextView view = new TextView(activity);
+        view.setText(text);
+        view.setTextSize(13);
+        view.setTypeface(Typeface.SANS_SERIF, emphasize ? Typeface.BOLD : Typeface.NORMAL);
+        view.setTextColor(color);
+        view.setFocusable(false);
+        return view;
     }
 
     private void runCommand(VesperaCommandClient.Command command) {
@@ -213,9 +485,25 @@ final class TelescopePanel {
                 if (result.success) {
                     commandResult.setText(activity.getString(
                             R.string.telescope_command_ok, label(command), result.message));
-                    if (visible) refreshStatusNow(true);
-                } else if ("auth_required".equals(result.message)) {
+                    if (command == VesperaCommandClient.Command.STOP) {
+                        updateObservationButtons(false);
+                    } else if (command == VesperaCommandClient.Command.RESUME) {
+                        updateObservationButtons(true);
+                    }
+                    if (visible) refreshStatusNow(false);
+                } else if ("auth_required".equals(result.message)
+                        || "auth_sign_failed".equals(result.message)) {
                     commandResult.setText(activity.getString(R.string.telescope_command_auth));
+                } else if (result.message.startsWith("status_unavailable")) {
+                    commandResult.setText(formatUnavailable(result.message));
+                } else if ("auth_missing_challenge".equals(result.message)) {
+                    commandResult.setText(activity.getString(
+                            R.string.telescope_command_auth_missing_challenge));
+                } else if ("auth_missing_id".equals(result.message)
+                        || "auth_missing".equals(result.message)) {
+                    commandResult.setText(activity.getString(R.string.telescope_command_auth_missing));
+                } else if ("no_target".equals(result.message)) {
+                    commandResult.setText(activity.getString(R.string.telescope_command_no_target));
                 } else {
                     commandResult.setText(activity.getString(
                             R.string.telescope_command_fail, label(command), result.message));
@@ -228,7 +516,9 @@ final class TelescopePanel {
         switch (command) {
             case PARK: return activity.getString(R.string.telescope_btn_park);
             case STOP: return activity.getString(R.string.telescope_btn_stop);
+            case RESUME: return activity.getString(R.string.telescope_btn_resume);
             case INIT: return activity.getString(R.string.telescope_btn_init);
+            case SHUTDOWN: return activity.getString(R.string.telescope_btn_shutdown);
             default: return command.path;
         }
     }
@@ -243,69 +533,75 @@ final class TelescopePanel {
     private void setCommandsEnabled(boolean enabled) {
         boolean busy = commandInFlight.get();
         boolean on = enabled && !busy;
-        scanPorts.setEnabled(on);
         cmdPark.setEnabled(on);
         cmdStop.setEnabled(on);
+        cmdResume.setEnabled(on);
         cmdInit.setEnabled(on);
+        cmdShutdown.setEnabled(on);
     }
 
-    private String formatInstrument(VesperaStatusSnapshot snap) {
-        StringBuilder out = new StringBuilder();
-        appendLine(out, activity.getString(R.string.status_tab_field_endpoint), snap.endpoint);
-        if (!snap.telescopeId.isEmpty()) {
-            appendLine(out, activity.getString(R.string.status_tab_field_id), snap.telescopeId);
-        }
-        if (!snap.model.isEmpty()) {
-            appendLine(out, activity.getString(R.string.status_tab_field_model), snap.model);
-        }
-        if (!snap.state.isEmpty()) {
-            appendLine(out, activity.getString(R.string.status_tab_field_state), snap.state);
-        }
-        appendLine(out, activity.getString(R.string.status_tab_field_initialized),
-                snap.initialized
-                        ? activity.getString(R.string.status_tab_yes)
-                        : activity.getString(R.string.status_tab_no));
-        if (!snap.operationType.isEmpty()) {
-            appendLine(out, activity.getString(R.string.status_tab_field_operation),
-                    snap.operationType);
-        }
-        if (!snap.targetName.isEmpty()) {
-            appendLine(out, activity.getString(R.string.status_tab_field_target), snap.targetName);
-        }
-        if (snap.stackingCount > 0) {
-            appendLine(out, activity.getString(R.string.status_tab_field_stacking),
-                    String.valueOf(snap.stackingCount));
-        }
-        if (snap.exposureMicroSec > 0) {
-            double sec = snap.exposureMicroSec / 1_000_000.0;
-            appendLine(out, activity.getString(R.string.status_tab_field_exposure),
-                    String.format(Locale.US, "%.1f s", sec));
-        }
-        if (snap.gain > 0) {
-            appendLine(out, activity.getString(R.string.status_tab_field_gain),
-                    String.valueOf(snap.gain));
-        }
-        if (snap.batteryPercent >= 0) {
-            String battery = snap.batteryPercent + "%";
-            if (!snap.batteryStatus.isEmpty()) {
-                battery += " (" + snap.batteryStatus + ")";
-            }
-            appendLine(out, activity.getString(R.string.status_tab_field_battery), battery);
-        }
-        if (!snap.hasInstrumentFields()) {
-            String compact = snap.rawJson;
-            if (compact.length() > 600) {
-                compact = compact.substring(0, 600) + "…";
-            }
-            appendLine(out, activity.getString(R.string.status_tab_field_raw), compact);
-        }
-        return out.toString().trim();
+    private void updateObservationButtons(boolean observing) {
+        cmdStop.setVisibility(observing ? View.VISIBLE : View.GONE);
+        cmdResume.setVisibility(observing ? View.GONE : View.VISIBLE);
     }
 
-    private static void appendLine(StringBuilder out, String label, String value) {
-        if (value == null || value.isEmpty()) return;
-        if (out.length() > 0) out.append('\n');
-        out.append(label).append(": ").append(value);
+    private void confirmShutdown() {
+        if (!isConnected()) {
+            commandResult.setText(activity.getString(R.string.status_tab_need_wifi));
+            return;
+        }
+        new AlertDialog.Builder(activity)
+                .setTitle(R.string.telescope_shutdown_title)
+                .setMessage(R.string.telescope_shutdown_message)
+                .setPositiveButton(R.string.telescope_btn_shutdown,
+                        (d, w) -> runCommand(VesperaCommandClient.Command.SHUTDOWN))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private String formatUnavailable(String detail) {
+        String base = activity.getString(R.string.status_tab_api_unavailable);
+        if (detail == null || detail.isEmpty()) return base;
+        return base + "\n" + detail;
+    }
+
+    private void maybeShowPowerWarning(VesperaStatusSnapshot snap) {
+        if (!visible || snap == null || activity.isFinishing()) return;
+        if (snap.isOnMainsPower()) {
+            powerWarningAccepted = false;
+            dismissPowerWarning(true);
+            return;
+        }
+        if (!snap.isOffMainsPower()) return;
+        if (powerWarningAccepted || powerWarningIgnoredThisVisit) return;
+        if (powerDialog != null && powerDialog.isShowing()) return;
+        AlertDialog dialog = new AlertDialog.Builder(activity)
+                .setTitle(R.string.telescope_power_title)
+                .setMessage(R.string.telescope_power_message)
+                .setPositiveButton(R.string.telescope_power_accept, (d, w) -> {
+                    powerWarningAccepted = true;
+                    powerWarningIgnoredThisVisit = false;
+                })
+                .setNegativeButton(R.string.telescope_power_ignore, (d, w) -> {
+                    powerWarningAccepted = false;
+                    powerWarningIgnoredThisVisit = true;
+                })
+                .setOnCancelListener(d -> {
+                    powerWarningAccepted = false;
+                    powerWarningIgnoredThisVisit = true;
+                })
+                .create();
+        powerDialog = dialog;
+        dialog.show();
+    }
+
+    private void dismissPowerWarning(boolean resetIgnore) {
+        AlertDialog dialog = powerDialog;
+        powerDialog = null;
+        if (dialog != null && dialog.isShowing()) {
+            dialog.dismiss();
+        }
+        if (resetIgnore) powerWarningIgnoredThisVisit = false;
     }
 
     private boolean isConnected() {
@@ -338,6 +634,8 @@ final class TelescopePanel {
         view.setText(text);
         view.setTextSize(14);
         view.setTextColor(0xFF37474F);
+        view.setFocusable(false);
+        view.setFocusableInTouchMode(false);
         UiStyle.applyRecessed(view, 0xFFECEFF1);
         UiStyle.spaceBelow(view, density);
         return view;

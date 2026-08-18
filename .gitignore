@@ -13,6 +13,7 @@ captures/
 
 # Local / secrets / device
 local.properties
+secrets.properties
 *.jks
 *.keystore
 *.key

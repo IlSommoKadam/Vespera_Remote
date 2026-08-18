@@ -691,6 +691,28 @@ auto_mount_from_state() {
   mount_disk "$spec"
 }
 
+set_clock() {
+  tz="$1"
+  epoch="$2"
+  stamp="$3"
+  if [ -n "$tz" ]; then
+    setprop persist.sys.timezone "$tz" 2>/dev/null
+    service call alarm 3 s16 "$tz" >/dev/null 2>&1
+  fi
+  settings put global auto_time 0 >/dev/null 2>&1
+  settings put global auto_time_zone 0 >/dev/null 2>&1
+  if [ -n "$epoch" ]; then
+    toybox date -u -s "@$epoch" >/dev/null 2>&1 \
+      || date -u -s "@$epoch" >/dev/null 2>&1
+  fi
+  if [ -n "$stamp" ]; then
+    date -u -s "$stamp" >/dev/null 2>&1 \
+      || toybox date -u -s "$stamp" >/dev/null 2>&1
+  fi
+  hwclock -w -u >/dev/null 2>&1
+  write_ack "clock-ok tz=$tz epoch=$epoch $(date)"
+}
+
 write_ack "vespera-netd started $(date)"
 auto_mount_from_state
 
@@ -699,6 +721,7 @@ handle_cmd() {
   cmd=$(echo "$line" | cut -d'|' -f1)
   a=$(echo "$line" | cut -d'|' -f2)
   b=$(echo "$line" | cut -d'|' -f3)
+  c=$(echo "$line" | cut -d'|' -f4)
   case "$cmd" in
     promote) promote "$a" "$b" ;;
     route) apply_route ;;
@@ -722,6 +745,7 @@ handle_cmd() {
     disk-status) disk_status ;;
     auto-mount) auto_mount_from_state ;;
     shutdown-umount) shutdown_umount_hd ;;
+    set-clock) set_clock "$a" "$b" "$c" ;;
     *) write_ack "unknown:$line" ;;
   esac
 }

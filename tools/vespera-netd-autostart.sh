@@ -10,6 +10,8 @@ PIDFILE=/data/local/tmp/vespera-netd.pid
 echo "vespera-netd-autostart $(date) pid=$$" >> "$log"
 
 chmod 755 /data/local/tmp/vespera-netd.sh 2>/dev/null
+
+chmod 755 /data/local/tmp/vespera-netd.sh 2>/dev/null
 if [ -x /data/local/tmp/ntfs/mount.ntfs ]; then
   chmod 755 /data/local/tmp/ntfs/mount.ntfs
   chmod 644 /data/local/tmp/ntfs/*.so 2>/dev/null

@@ -3,17 +3,8 @@ package com.vaonis.vesperahelper;
 import android.net.Network;
 import android.util.Log;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
-
 /**
- * Sends Vespera REST commands directly (no Singularity app).
- * Control endpoints may return 401 without API auth (phase 2).
+ * Sends Vespera REST commands with Ed25519 challenge-response auth.
  */
 final class VesperaCommandClient {
     private static final String TAG = "VesperaCmd";
@@ -22,7 +13,9 @@ final class VesperaCommandClient {
     enum Command {
         PARK("/v1/general/park"),
         STOP("/v1/general/stopObservation"),
-        INIT("/v1/general/startAutoInit");
+        RESUME("/v1/general/startObservation"),
+        INIT("/v1/general/startAutoInit"),
+        SHUTDOWN("/v1/general/shutdown");
 
         final String path;
 
@@ -49,52 +42,56 @@ final class VesperaCommandClient {
         if (host == null || host.isEmpty()) host = "10.0.0.1";
         int port = apiPort > 0 ? apiPort : 8082;
         if (port == 8083) port = 8082;
-        HttpURLConnection conn = null;
+        VesperaStatusClient.Result status = VesperaStatusClient.fetchResult(host, port, network);
+        VesperaStatusSnapshot snap = status.snapshot;
+        if (snap == null) {
+            String detail = status.error.isEmpty() ? "status_unavailable" : status.error;
+            return new Result(false, -1, "status_unavailable: " + detail);
+        }
+        if (!snap.canSignCommands()) {
+            return new Result(false, -1, snap.authMissingCode());
+        }
+        String body = "{}";
+        if (command == Command.RESUME) {
+            body = VesperaLastTarget.startObservationBody();
+            if (body.isEmpty()) {
+                return new Result(false, -1, "no_target");
+            }
+        }
+        String authorization = VesperaApiAuth.authorizationHeader(snap);
+        if (authorization.isEmpty()) {
+            return new Result(false, -1, "auth_sign_failed");
+        }
+        String[] paths;
+        if (command == Command.SHUTDOWN) {
+            paths = new String[] { command.path, "/v1/general/powerOff", "/v1/device/shutdown" };
+        } else if (command == Command.RESUME) {
+            paths = new String[] {
+                    "/v1/general/resumeObservation",
+                    command.path
+            };
+        } else {
+            paths = new String[] { command.path };
+        }
+        Result last = new Result(false, -1, "HTTP");
         try {
-            URL url = new URL("http://" + host + ":" + port + command.path);
-            conn = network != null
-                    ? (HttpURLConnection) network.openConnection(url)
-                    : (HttpURLConnection) url.openConnection();
-            conn.setConnectTimeout(TIMEOUT_MS);
-            conn.setReadTimeout(TIMEOUT_MS);
-            conn.setRequestMethod("POST");
-            conn.setDoOutput(true);
-            conn.setRequestProperty("Content-Type", "application/json");
-            conn.setRequestProperty("Accept", "application/json");
-            byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
-            try (OutputStream out = conn.getOutputStream()) {
-                out.write(body);
+            for (String path : paths) {
+                VesperaHttp.Response response = VesperaHttp.post(
+                        network, host, port, path, body, authorization, TIMEOUT_MS);
+                boolean ok = response.code >= 200 && response.code < 300;
+                if (!ok && response.code == 401) {
+                    return new Result(false, response.code, "auth_required");
+                }
+                String msg = response.body.isEmpty()
+                        ? ("HTTP " + response.code) : truncate(response.body, 200);
+                last = new Result(ok, response.code, msg);
+                if (ok) return last;
+                if (response.code != 404 && response.code != 405) return last;
             }
-            int code = conn.getResponseCode();
-            String response = readBody(conn, code);
-            boolean ok = code >= 200 && code < 300;
-            if (!ok && code == 401) {
-                return new Result(false, code, "auth_required");
-            }
-            String msg = response.isEmpty() ? ("HTTP " + code) : truncate(response, 200);
-            return new Result(ok, code, msg);
+            return last;
         } catch (Exception failure) {
             Log.w(TAG, command.path + ": " + failure.getMessage());
             return new Result(false, -1, failure.getMessage());
-        } finally {
-            if (conn != null) conn.disconnect();
-        }
-    }
-
-    private static String readBody(HttpURLConnection conn, int code) {
-        InputStream stream = code >= 200 && code < 300
-                ? conn.getInputStream() : conn.getErrorStream();
-        if (stream == null) return "";
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-            StringBuilder body = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                body.append(line);
-            }
-            return body.toString();
-        } catch (Exception ignored) {
-            return "";
         }
     }
 

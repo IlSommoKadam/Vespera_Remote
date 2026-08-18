@@ -5,10 +5,8 @@ import android.util.Log;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -99,23 +97,13 @@ final class VesperaPortScanner {
     }
 
     private static String probeHttpHead(Network network, String host, int port, String path) {
-        HttpURLConnection conn = null;
         try {
-            URL url = new URL("http://" + host + ":" + port + path);
-            conn = network != null
-                    ? (HttpURLConnection) network.openConnection(url)
-                    : (HttpURLConnection) url.openConnection();
-            conn.setConnectTimeout(TIMEOUT_MS);
-            conn.setReadTimeout(TIMEOUT_MS);
-            conn.setRequestMethod("GET");
-            int code = conn.getResponseCode();
-            if (code >= 200 && code < 500) {
-                return "HTTP " + code;
+            VesperaHttp.Response response = VesperaHttp.get(network, host, port, path, TIMEOUT_MS);
+            if (response.code >= 200 && response.code < 500) {
+                return "HTTP " + response.code;
             }
         } catch (Exception ignored) {
             // fall through
-        } finally {
-            if (conn != null) conn.disconnect();
         }
         return null;
     }

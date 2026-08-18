@@ -6,7 +6,7 @@ import java.text.DateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-/** Formats the latest {@link VesperaPortScan} for UI (Wi‑Fi + Foto tabs). */
+/** Formats the latest {@link VesperaPortScan} for UI (Wi‑Fi + Telescopio + Foto). */
 final class VesperaPortInventory {
     private VesperaPortInventory() {}
 

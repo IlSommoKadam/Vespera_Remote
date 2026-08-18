@@ -14,6 +14,12 @@ final class UiStyle {
     static final int SLATE = 0xFF4A6F86;
     /** Unselected tabs and muted chrome. */
     static final int SLATE_MUTED = 0xFF7A8B96;
+    /** Recessed well behind the tab strip. */
+    static final int TAB_WELL = 0xFF9AA9B5;
+    /** Unselected tab face (lighter than the well so segments stay distinct). */
+    static final int TAB_IDLE_FACE = 0xFFF4F7FA;
+    static final int TAB_IDLE_TEXT = 0xFF263238;
+    static final int TAB_DIVIDER = 0xFF6D7D88;
     /** Connect / connected / mount. */
     static final int GREEN = 0xFF3B7F55;
     /** Instrument detected (status). */
@@ -50,6 +56,35 @@ final class UiStyle {
         fill.setCornerRadius(radius);
         InsetDrawable insetFill = new InsetDrawable(fill, 0, inset, 0, 0);
         return new LayerDrawable(new Drawable[] { well, insetFill });
+    }
+
+    static Drawable sectionPanel(float density) {
+        GradientDrawable box = new GradientDrawable();
+        box.setColor(0xFFF3F7FA);
+        box.setCornerRadius(Math.round(10 * density));
+        box.setStroke(Math.max(2, Math.round(1.5f * density)), 0xFF90A4AE);
+        return box;
+    }
+
+    static Drawable tabStripWell(float density) {
+        return roundRect(TAB_WELL, Math.round(8 * density));
+    }
+
+    static void applyTab(TextView view, int color, boolean selected,
+                         boolean roundLeft, boolean roundRight) {
+        float density = view.getResources().getDisplayMetrics().density;
+        view.setEnabled(true);
+        view.setBackground(tabBackground(selected ? color : TAB_IDLE_FACE, density,
+                roundLeft, roundRight, selected));
+        view.setTextColor(selected ? textOn(color) : TAB_IDLE_TEXT);
+        view.setStateListAnimator(null);
+        view.setElevation(0f);
+        int h = Math.round(12 * density);
+        int v = Math.round(10 * density);
+        view.setPadding(h, v, h, v);
+        view.setAlpha(1f);
+        view.setMinHeight(Math.round(44 * density));
+        view.setMinimumHeight(Math.round(44 * density));
     }
 
     static void applyRaised(TextView view, int color, boolean enabled) {
@@ -94,6 +129,34 @@ final class UiStyle {
         int b = color & 0xFF;
         double lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
         return lum > 0.62 ? 0xFF212121 : 0xFFFFFFFF;
+    }
+
+    private static Drawable tabBackground(int color, float density,
+                                         boolean roundLeft, boolean roundRight,
+                                         boolean selected) {
+        StateListDrawable states = new StateListDrawable();
+        states.addState(new int[] { android.R.attr.state_pressed },
+                tabFace(color, density, roundLeft, roundRight, true, selected));
+        states.addState(new int[] {},
+                tabFace(color, density, roundLeft, roundRight, false, selected));
+        return states;
+    }
+
+    private static Drawable tabFace(int color, float density,
+                                    boolean roundLeft, boolean roundRight,
+                                    boolean pressed, boolean selected) {
+        float radius = 7 * density;
+        float left = roundLeft ? radius : 0f;
+        float right = roundRight ? radius : 0f;
+        float[] radii = new float[] {
+                left, left, right, right, right, right, left, left
+        };
+        GradientDrawable fill = new GradientDrawable();
+        fill.setColor(pressed ? darken(color, 0.08f) : color);
+        fill.setCornerRadii(radii);
+        int stroke = Math.max(1, Math.round(density));
+        fill.setStroke(stroke, selected ? darken(color, 0.18f) : TAB_DIVIDER);
+        return fill;
     }
 
     private static Drawable beveled(int color, float density, boolean raised, boolean pressed) {

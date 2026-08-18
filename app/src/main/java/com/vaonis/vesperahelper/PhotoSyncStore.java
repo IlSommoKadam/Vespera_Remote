@@ -4,16 +4,25 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import java.io.File;
+import java.util.Calendar;
 import java.util.Locale;
+import java.util.TimeZone;
 
-/** Last photo-sync run and all-day automatic interval. */
+/** Last photo-sync run and day/night automatic intervals. */
 final class PhotoSyncStore {
-    static final float DEFAULT_INTERVAL_HOURS = 2f;
+    static final int DEFAULT_DAY_START = 10;
+    static final int DEFAULT_DAY_END = 19;
+
+    static final float DEFAULT_DAY_INTERVAL_HOURS = 3f;
+    static final float DEFAULT_NIGHT_INTERVAL_HOURS = 1f;
     static final float MIN_INTERVAL_HOURS = 0.25f;
     static final float MAX_INTERVAL_HOURS = 12f;
 
     private static final String PREFS = "vespera_photo_sync";
-    private static final String KEY_INTERVAL_HOURS = "interval_hours";
+    private static final String KEY_START = "day_start_hour";
+    private static final String KEY_END = "day_end_hour";
+    private static final String KEY_DAY_INTERVAL_HOURS = "day_interval_hours";
+    private static final String KEY_NIGHT_INTERVAL_HOURS = "night_interval_hours";
     private static final String KEY_LAST_AT = "last_at";
     private static final String KEY_LAST_ATTEMPT = "last_attempt_at";
     private static final String KEY_LAST_COPIED = "last_copied";
@@ -25,6 +34,19 @@ final class PhotoSyncStore {
     private static final String KEY_PHOTOS_PATH = "photos_path";
     private static final String KEY_IN_PROGRESS = "in_progress";
     private static final String KEY_PAUSED = "paused";
+    private static final String KEY_HAS_SITE = "has_site";
+    private static final String KEY_SITE_LAT = "site_lat";
+    private static final String KEY_SITE_LON = "site_lon";
+    private static final String KEY_SITE_LABEL = "site_label";
+    private static final String KEY_SITE_SOURCE = "site_source";
+    private static final String KEY_SITE_TZ = "site_tz";
+    private static final String KEY_SITE_COUNTRY = "site_country";
+    private static final String KEY_AUTO_HOURS = "auto_hours";
+    private static final String KEY_SUN_DAY = "sun_day";
+    private static final String KEY_LAST_NTP = "last_ntp_at";
+    private static final String KEY_NTP_OK = "last_ntp_ok";
+    static final String SITE_CITY = "city";
+    static final String SITE_VESPERA = "vespera";
     static final String MARKER_NAME = "sync.inprogress";
 
     private final SharedPreferences prefs;
@@ -38,14 +60,122 @@ final class PhotoSyncStore {
                 context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE));
     }
 
-    float intervalHours() {
-        float hours = prefs.getFloat(KEY_INTERVAL_HOURS, DEFAULT_INTERVAL_HOURS);
+    int dayStartHour() { return prefs.getInt(KEY_START, DEFAULT_DAY_START); }
+    int dayEndHour() { return prefs.getInt(KEY_END, DEFAULT_DAY_END); }
+
+    float dayIntervalHours() {
+        float hours = prefs.getFloat(KEY_DAY_INTERVAL_HOURS, DEFAULT_DAY_INTERVAL_HOURS);
         return clampIntervalHours(hours);
     }
 
-    void setIntervalHours(float hours) {
-        prefs.edit().putFloat(KEY_INTERVAL_HOURS, clampIntervalHours(hours)).commit();
+    float nightIntervalHours() {
+        float hours = prefs.getFloat(KEY_NIGHT_INTERVAL_HOURS, DEFAULT_NIGHT_INTERVAL_HOURS);
+        return clampIntervalHours(hours);
     }
+
+    void setDayIntervalHours(float hours) {
+        prefs.edit().putFloat(KEY_DAY_INTERVAL_HOURS, clampIntervalHours(hours)).commit();
+    }
+
+    void setNightIntervalHours(float hours) {
+        prefs.edit().putFloat(KEY_NIGHT_INTERVAL_HOURS, clampIntervalHours(hours)).commit();
+    }
+
+    void setDayStartHour(int hour) {
+        prefs.edit().putInt(KEY_START, clampHour(hour)).commit();
+    }
+
+    void setDayEndHour(int hour) {
+        prefs.edit().putInt(KEY_END, clampHour(hour)).commit();
+    }
+
+    boolean hasSite() { return prefs.getBoolean(KEY_HAS_SITE, false); }
+    float siteLat() { return prefs.getFloat(KEY_SITE_LAT, 0f); }
+    float siteLon() { return prefs.getFloat(KEY_SITE_LON, 0f); }
+    String siteLabel() { return prefs.getString(KEY_SITE_LABEL, ""); }
+    String siteSource() { return prefs.getString(KEY_SITE_SOURCE, ""); }
+    String siteTimeZone() { return prefs.getString(KEY_SITE_TZ, ""); }
+    String siteCountry() { return prefs.getString(KEY_SITE_COUNTRY, ""); }
+    boolean autoHours() { return prefs.getBoolean(KEY_AUTO_HOURS, false) && hasSite(); }
+
+    TimeZone zone() {
+        return TimeZones.zone(siteTimeZone());
+    }
+
+    void setSiteTimeZone(String timeZoneId) {
+        prefs.edit().putString(KEY_SITE_TZ, timeZoneId == null ? "" : timeZoneId).commit();
+    }
+
+    void setAutoHours(boolean auto) {
+        prefs.edit().putBoolean(KEY_AUTO_HOURS, auto).commit();
+    }
+
+    void setSite(double lat, double lon, String label, String source) {
+        setSite(lat, lon, label, source, "");
+    }
+
+    void setSite(double lat, double lon, String label, String source, String countryCode) {
+        prefs.edit()
+                .putBoolean(KEY_HAS_SITE, true)
+                .putFloat(KEY_SITE_LAT, (float) lat)
+                .putFloat(KEY_SITE_LON, (float) lon)
+                .putString(KEY_SITE_LABEL, label == null ? "" : label)
+                .putString(KEY_SITE_SOURCE, source == null ? "" : source)
+                .putString(KEY_SITE_COUNTRY, countryCode == null ? "" : countryCode)
+                .putString(KEY_SITE_TZ, "")
+                .putBoolean(KEY_AUTO_HOURS, true)
+                .putInt(KEY_SUN_DAY, -1)
+                .putLong(KEY_LAST_NTP, 0)
+                .commit();
+    }
+
+    boolean clockSyncDue(long nowMs, long intervalMs) {
+        long last = prefs.getLong(KEY_LAST_NTP, 0);
+        if (last <= 0) return true;
+        if (nowMs - last >= intervalMs) return true;
+        Calendar now = Calendar.getInstance(zone());
+        now.setTimeInMillis(nowMs);
+        Calendar then = Calendar.getInstance(zone());
+        then.setTimeInMillis(last);
+        return now.get(Calendar.DAY_OF_YEAR) != then.get(Calendar.DAY_OF_YEAR)
+                || now.get(Calendar.YEAR) != then.get(Calendar.YEAR);
+    }
+
+    boolean lastNtpOk() { return prefs.getBoolean(KEY_NTP_OK, false); }
+
+    void recordClockSync(long nowMs, boolean ok) {
+        prefs.edit().putLong(KEY_LAST_NTP, nowMs).putBoolean(KEY_NTP_OK, ok).commit();
+    }
+
+    /** Recompute day/night hours from today's sunrise/sunset in the site timezone. */
+    boolean applySunHours(long nowMs) {
+        return applySunHours(nowMs, false);
+    }
+
+    boolean applySunHours(long nowMs, boolean force) {
+        if (!autoHours()) return false;
+        TimeZone tz = zone();
+        Calendar calendar = Calendar.getInstance(tz);
+        calendar.setTimeInMillis(nowMs);
+        int dayKey = calendar.get(Calendar.YEAR) * 1000 + calendar.get(Calendar.DAY_OF_YEAR);
+        if (!force && dayKey == prefs.getInt(KEY_SUN_DAY, -1)) return false;
+        SunTimes.Result sun = SunTimes.compute(siteLat(), siteLon(), nowMs, tz);
+        if (sun.polar) return false;
+        int start = SunTimes.roundHour(sun.sunriseMs, tz);
+        int end = SunTimes.roundHour(sun.sunsetMs, tz);
+        if (start == end) end = clampHour(end + 1);
+        prefs.edit()
+                .putInt(KEY_START, clampHour(start))
+                .putInt(KEY_END, clampHour(end))
+                .putInt(KEY_SUN_DAY, dayKey)
+                .commit();
+        return true;
+    }
+
+    // Backward compat: old UI used a single "intervalHours()". Keep it as day interval.
+    float intervalHours() { return dayIntervalHours(); }
+
+    void setIntervalHours(float hours) { setDayIntervalHours(hours); }
 
     static float clampIntervalHours(float hours) {
         if (hours < MIN_INTERVAL_HOURS) return MIN_INTERVAL_HOURS;
@@ -53,15 +183,21 @@ final class PhotoSyncStore {
         return hours;
     }
 
+    private static int clampHour(int hour) {
+        if (hour < 0) return 0;
+        if (hour > 23) return 23;
+        return hour;
+    }
+
     static float parseIntervalHours(String raw) {
-        if (raw == null) return DEFAULT_INTERVAL_HOURS;
+        if (raw == null) return DEFAULT_DAY_INTERVAL_HOURS;
         String text = raw.trim().toLowerCase(Locale.US).replace(',', '.');
         if (text.endsWith("h")) text = text.substring(0, text.length() - 1).trim();
-        if (text.isEmpty()) return DEFAULT_INTERVAL_HOURS;
+        if (text.isEmpty()) return DEFAULT_DAY_INTERVAL_HOURS;
         try {
             return clampIntervalHours(Float.parseFloat(text));
         } catch (NumberFormatException ignored) {
-            return DEFAULT_INTERVAL_HOURS;
+            return DEFAULT_DAY_INTERVAL_HOURS;
         }
     }
 
@@ -73,8 +209,12 @@ final class PhotoSyncStore {
         return String.format(Locale.US, "%.2f", clamped).replaceAll("0+$", "").replaceAll("\\.$", "");
     }
 
-    long intervalMs() {
-        return Math.round(intervalHours() * 3_600_000L);
+    long dayIntervalMs() {
+        return Math.round(dayIntervalHours() * 3_600_000L);
+    }
+
+    long nightIntervalMs() {
+        return Math.round(nightIntervalHours() * 3_600_000L);
     }
 
     long lastAttemptAt() { return prefs.getLong(KEY_LAST_ATTEMPT, 0); }
@@ -83,11 +223,65 @@ final class PhotoSyncStore {
         prefs.edit().putLong(KEY_LAST_ATTEMPT, System.currentTimeMillis()).commit();
     }
 
+    boolean isDaytime(long nowMs) {
+        Calendar calendar = Calendar.getInstance(zone());
+        calendar.setTimeInMillis(nowMs);
+        int hour = calendar.get(Calendar.HOUR_OF_DAY);
+        return hour >= dayStartHour() && hour < dayEndHour();
+    }
+
+    long nextNightEndAt(long nowMs) {
+        Calendar calendar = Calendar.getInstance(zone());
+        calendar.setTimeInMillis(nowMs);
+        int start = dayStartHour();
+        calendar.set(Calendar.HOUR_OF_DAY, start);
+        calendar.set(Calendar.MINUTE, 0);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        if (nowMs >= calendar.getTimeInMillis()) {
+            calendar.add(Calendar.DAY_OF_YEAR, 1);
+        }
+        return calendar.getTimeInMillis();
+    }
+
+    private long nextSlotAfter(long refMs) {
+        Calendar calendar = Calendar.getInstance(zone());
+        calendar.setTimeInMillis(refMs);
+        int hour = calendar.get(Calendar.HOUR_OF_DAY);
+        boolean daytime = hour >= dayStartHour() && hour < dayEndHour();
+
+        int start = dayStartHour();
+        int end = dayEndHour();
+
+        long periodStartMs;
+        long intervalMs;
+        if (daytime) {
+            calendar.set(Calendar.HOUR_OF_DAY, start);
+            calendar.set(Calendar.MINUTE, 0);
+            calendar.set(Calendar.SECOND, 0);
+            calendar.set(Calendar.MILLISECOND, 0);
+            periodStartMs = calendar.getTimeInMillis();
+            intervalMs = dayIntervalMs();
+        } else {
+            intervalMs = nightIntervalMs();
+            calendar.set(Calendar.HOUR_OF_DAY, end);
+            calendar.set(Calendar.MINUTE, 0);
+            calendar.set(Calendar.SECOND, 0);
+            calendar.set(Calendar.MILLISECOND, 0);
+            if (hour < end) calendar.add(Calendar.DAY_OF_YEAR, -1);
+            periodStartMs = calendar.getTimeInMillis();
+        }
+
+        long elapsed = refMs - periodStartMs;
+        if (elapsed < 0) elapsed = 0;
+        long slots = (elapsed + intervalMs - 1) / intervalMs; // ceil
+        return periodStartMs + slots * intervalMs;
+    }
+
     long nextAutoAt(long nowMs) {
         long last = Math.max(lastAt(), lastAttemptAt());
-        long candidate = last <= 0 ? nowMs : last + intervalMs();
-        if (candidate < nowMs) candidate = nowMs;
-        return candidate;
+        long ref = Math.max(nowMs, last <= 0 ? nowMs : last);
+        return nextSlotAfter(ref);
     }
 
     boolean isAutoDue(long nowMs) {

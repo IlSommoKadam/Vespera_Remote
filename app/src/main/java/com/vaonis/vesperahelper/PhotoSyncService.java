@@ -50,6 +50,7 @@ public final class PhotoSyncService extends Service {
     public static final String ACTION_PAUSE = "com.vaonis.vesperahelper.PHOTO_PAUSE";
     public static final String ACTION_HIDE_WINDOW = "com.vaonis.vesperahelper.PHOTO_HIDE_WINDOW";
     public static final String ACTION_SHOW_WINDOW = "com.vaonis.vesperahelper.PHOTO_SHOW_WINDOW";
+    public static final String ACTION_SYNC_CLOCK = "com.vaonis.vesperahelper.PHOTO_SYNC_CLOCK";
     public static final String EXTRA_SPEC = "spec";
     public static final String EXTRA_DISK_ID = "disk_id";
     public static final String EXTRA_DISKS = "disks";
@@ -69,7 +70,10 @@ public final class PhotoSyncService extends Service {
 
     private static final String TAG = "VesperaPhotos";
     private static final int NOTIFICATION_ID = 43;
-    private static final long TICK_MS = 30_000;
+    /** HD/FTP housekeeping only — auto-sync is scheduled separately. */
+    private static final long TICK_MS = 120_000;
+    private static final long AUTO_RETRY_MS = 5 * 60_000L;
+    private static final long MIN_AUTO_DELAY_MS = 5_000L;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -99,11 +103,13 @@ public final class PhotoSyncService extends Service {
     private long lastNotifyAt;
     private SyncProgress lastProgress;
     private String lastBroadcastPhase = "";
+    private volatile long extraAutoDelayMs;
     private boolean connectionReceiverRegistered;
     private final BroadcastReceiver connectionReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             String status = intent.getStringExtra(VesperaConnectionService.EXTRA_STATUS);
             if (VesperaConnectionService.STATUS_CONNECTED.equals(status)) {
+                extraAutoDelayMs = 0;
                 worker.execute(PhotoSyncService.this::refreshTelescopeFtpLocked);
                 syncExecutor.execute(PhotoSyncService.this::resumeSuspendedIfNeeded);
             } else {
@@ -115,15 +121,16 @@ public final class PhotoSyncService extends Service {
             }
         }
     };
+    private final Runnable autoSyncAlarm = () -> syncExecutor.execute(() -> maybeAutoSync(false));
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             worker.execute(() -> {
+                refreshClockAndSun(false);
                 refreshMountStatus();
                 maybeAutoMount();
                 refreshTelescopeFtpLocked();
                 publish();
             });
-            syncExecutor.execute(() -> maybeAutoSync(false));
             mainHandler.postDelayed(this, TICK_MS);
         }
     };
@@ -218,6 +225,7 @@ public final class PhotoSyncService extends Service {
             connectionReceiverRegistered = true;
         }
         worker.execute(() -> {
+            refreshClockAndSun(true);
             refreshMountStatus();
             bootstrapMountLocked();
             if (mounted) startFtpLocked();
@@ -227,6 +235,7 @@ public final class PhotoSyncService extends Service {
             syncExecutor.execute(PhotoSyncService.this::resumeSuspendedIfNeeded);
         });
         mainHandler.postDelayed(tick, TICK_MS);
+        scheduleNextAutoSync();
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -235,6 +244,7 @@ public final class PhotoSyncService extends Service {
         if (ACTION_BOOTSTRAP.equals(action) || action == null) {
             worker.execute(() -> {
                 userUnmounted = false;
+                refreshClockAndSun(true);
                 refreshMountStatus();
                 bootstrapMountLocked();
                 if (mounted) startFtpLocked();
@@ -243,12 +253,15 @@ public final class PhotoSyncService extends Service {
                 publish();
                 syncExecutor.execute(PhotoSyncService.this::resumeSuspendedIfNeeded);
             });
+            scheduleNextAutoSync();
         } else if (ACTION_REFRESH_DISKS.equals(action) || ACTION_LIST_DISKS.equals(action)) {
             worker.execute(() -> {
+                refreshClockAndSun(false);
                 listDisksLocked();
                 if (!mounted) bootstrapMountLocked();
                 refreshMountStatus();
                 publish();
+                scheduleNextAutoSync();
             });
         } else if (ACTION_MOUNT.equals(action)) {
             String spec = intent.getStringExtra(EXTRA_SPEC);
@@ -278,6 +291,7 @@ public final class PhotoSyncService extends Service {
                 syncStore.setPaused(true);
             }
             if (hud != null) hud.hideByUser();
+            mainHandler.removeCallbacks(autoSyncAlarm);
             publish();
         } else if (ACTION_HIDE_WINDOW.equals(action)) {
             if (hud != null) hud.hideByUser();
@@ -285,6 +299,12 @@ public final class PhotoSyncService extends Service {
             if (hud != null) hud.show();
         } else if (ACTION_FORGET.equals(action)) {
             worker.execute(this::forgetLocked);
+        } else if (ACTION_SYNC_CLOCK.equals(action)) {
+            worker.execute(() -> {
+                refreshClockAndSun(true);
+                publish();
+                scheduleNextAutoSync();
+            });
         }
         return START_STICKY;
     }
@@ -396,6 +416,8 @@ public final class PhotoSyncService extends Service {
             }
             message = localized.getString(R.string.photos_mount_ok, hdStore.displayName());
             startFtpLocked();
+            extraAutoDelayMs = 0;
+            scheduleNextAutoSync();
         } else if (status.raw != null && status.raw.startsWith("mount-unsupported-ntfs")) {
             message = localized.getString(R.string.photos_mount_ntfs);
             stopFtpLocked();
@@ -520,6 +542,8 @@ public final class PhotoSyncService extends Service {
             startFtpLocked();
             Context localized = AppLocale.wrap(this);
             message = localized.getString(R.string.photos_mount_ok, hdStore.displayName());
+            extraAutoDelayMs = 0;
+            scheduleNextAutoSync();
         } else if (status.timeout) {
             Context localized = AppLocale.wrap(this);
             message = localized.getString(R.string.photos_daemon_timeout);
@@ -557,6 +581,17 @@ public final class PhotoSyncService extends Service {
         refreshFtpStatus();
     }
 
+    private void refreshClockAndSun(boolean forceNtp) {
+        if (syncStore == null || !syncStore.hasSite()) return;
+        SiteClock.Result result = SiteClock.sync(this, syncStore, forceNtp);
+        if (result.hoursChanged || result.ntpOk) {
+            Log.i(TAG, "clock tz=" + result.timeZoneId
+                    + " ntp=" + result.ntpOk
+                    + " hours=" + syncStore.dayStartHour() + "-" + syncStore.dayEndHour());
+            mainHandler.post(this::scheduleNextAutoSync);
+        }
+    }
+
     private void refreshSyncHint() {
         Context localized = AppLocale.wrap(this);
         if (syncing) {
@@ -575,17 +610,42 @@ public final class PhotoSyncService extends Service {
             syncStatus = localized.getString(R.string.photos_sync_need_vespera);
             return;
         }
-        long nextAt = syncStore.nextAutoAt(System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        long nextAt = syncStore.nextAutoAt(now);
+        boolean nextIsDay = syncStore.isDaytime(nextAt);
+        float intervalHours = nextIsDay ? syncStore.dayIntervalHours() : syncStore.nightIntervalHours();
+        String nextNightEnd = formatClock(syncStore.nextNightEndAt(now));
         syncStatus = localized.getString(R.string.photos_sync_next,
                 formatClock(nextAt),
-                PhotoSyncStore.formatIntervalHours(syncStore.intervalHours()));
+                PhotoSyncStore.formatIntervalHours(intervalHours),
+                nextNightEnd);
     }
 
-    private static String formatClock(long timeMs) {
-        Calendar calendar = Calendar.getInstance();
+    private String formatClock(long timeMs) {
+        Calendar calendar = Calendar.getInstance(
+                syncStore != null ? syncStore.zone() : java.util.TimeZone.getDefault());
         calendar.setTimeInMillis(timeMs);
         return String.format(java.util.Locale.US, "%02d:%02d",
                 calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE));
+    }
+
+    private void scheduleNextAutoSync() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(this::scheduleNextAutoSync);
+            return;
+        }
+        mainHandler.removeCallbacks(autoSyncAlarm);
+        if (syncStore == null || syncStore.paused()) return;
+        synchronized (syncLock) {
+            if (syncing) return;
+        }
+        long now = System.currentTimeMillis();
+        long untilDue = syncStore.nextAutoAt(now) - now;
+        long delay = Math.max(untilDue, extraAutoDelayMs);
+        extraAutoDelayMs = 0;
+        if (delay < MIN_AUTO_DELAY_MS) delay = MIN_AUTO_DELAY_MS;
+        mainHandler.postDelayed(autoSyncAlarm, delay);
+        Log.i(TAG, "next auto-sync in " + (delay / 1000L) + "s");
     }
 
     private void maybeAutoSync(boolean force) {
@@ -597,124 +657,142 @@ public final class PhotoSyncService extends Service {
                 return;
             }
         }
-        if (syncStore != null && syncStore.paused() && !force) {
-            refreshSyncHint();
-            return;
-        }
-        if (!force && !resume && !syncStore.isAutoDue(System.currentTimeMillis())) {
-            refreshSyncHint();
-            publish();
-            return;
-        }
-        ensureMountedForSync();
-        File root = DaemonDisk.photosDir(this);
-        if (!DaemonDisk.isPhotosBoundLive(root)) {
-            DaemonDisk.MountStatus rebound = DaemonDisk.ensureBind(this);
-            applyMountStatus(rebound);
-            root = DaemonDisk.photosDir(this);
-        }
-        if (!mounted || root == null || !root.isDirectory()) {
-            message = localized.getString(R.string.photos_sync_need_hd);
-            if (force || resume) {
-                showSyncGate(SyncProgress.PHASE_ERROR, message);
-            }
-            refreshSyncHint();
-            publish();
-            return;
-        }
-        if (!DaemonDisk.isPhotosBoundLive(root) && !root.canWrite()) {
-            message = localized.getString(R.string.photos_sync_local_user);
-            if (force || resume) {
-                showSyncGate(SyncProgress.PHASE_ERROR, message);
-            }
-            refreshSyncHint();
-            publish();
-            return;
-        }
-        Network network = resolveVesperaNetwork();
-        if (network == null && !isVesperaConnected() && !canReachVesperaFtp(null)) {
-            message = localized.getString(R.string.photos_sync_need_vespera);
-            if (force && !resume) {
-                showSyncGate(SyncProgress.PHASE_ERROR, message);
-            } else if (resume) {
-                syncStatus = localized.getString(R.string.photo_sync_resume_wait_vespera);
-                message = syncStatus;
+        try {
+            if (syncStore != null && syncStore.paused() && !force) {
                 refreshSyncHint();
+                return;
             }
-            publish();
-            return;
-        }
-        synchronized (syncLock) {
-            if (syncing) return;
-            syncing = true;
-        }
-        if (!force && !resume) syncStore.recordAttempt();
-        syncStore.markInProgress(this);
-        pauseRequested.set(false);
-        lastProgress = new SyncProgress();
-        lastProgress.active = true;
-        lastProgress.phase = SyncProgress.PHASE_LIST;
-        lastProgress.detail = resume
-                ? localized.getString(R.string.photo_sync_resume)
-                : localized.getString(R.string.photo_sync_listing);
-        refreshSyncHint();
-        if (hud != null) {
-            hud.show();
-            hud.bind(lastProgress);
-        }
-        publish();
-        PhotoSyncEngine.Result result = PhotoSyncEngine.sync(network, root, this::onEngineProgress,
-                pauseRequested::get);
-        synchronized (syncLock) {
-            syncing = false;
-        }
-        boolean paused = "paused".equals(result.error);
-        boolean complete = result.error == null && result.failed == 0;
-        boolean startedWork = result.downloaded > 0 || result.skipped > 0
-                || result.deleted > 0 || PhotoSyncEngine.hasIncomplete(root);
-        if (paused) {
-            syncStore.markInterrupted(this);
-            syncStore.setPaused(true);
-            lastSync = localized.getString(R.string.photo_sync_paused);
-        } else if (complete) {
-            syncStore.clearInProgress(this);
-        } else if (!startedWork) {
-            syncStore.clearInProgress(this);
-        } else {
-            syncStore.markInterrupted(this);
-        }
-        if (paused) {
-            lastSync = localized.getString(R.string.photo_sync_paused);
-        } else if (result.error != null) {
-            syncStore.recordFailure(result.error);
-            if ("missing-user".equals(result.error)) {
-                lastSync = localized.getString(R.string.photos_sync_no_user);
-            } else if ("hd-unmounted".equals(result.error)) {
-                lastSync = localized.getString(R.string.photos_sync_need_hd);
-            } else if ("local-user".equals(result.error)) {
-                lastSync = localized.getString(R.string.photos_sync_local_user);
-            } else {
-                lastSync = localized.getString(R.string.photos_sync_error, result.error);
+            if (!force && !resume && !syncStore.isAutoDue(System.currentTimeMillis())) {
+                refreshSyncHint();
+                publish();
+                return;
             }
-        } else {
-            syncStore.recordSuccess(result.downloaded, result.skipped, result.deleted, result.bytes);
-            syncStore.setPhotosPath(new File(root, "USER").getAbsolutePath());
-            lastSync = formatSyncSummary(localized, result, new File(root, "USER"));
+            ensureMountedForSync();
+            File root = DaemonDisk.photosDir(this);
+            if (!DaemonDisk.isPhotosBoundLive(root)) {
+                DaemonDisk.MountStatus rebound = DaemonDisk.ensureBind(this);
+                applyMountStatus(rebound);
+                root = DaemonDisk.photosDir(this);
+            }
+            if (!mounted || root == null || !root.isDirectory()) {
+                message = localized.getString(R.string.photos_sync_need_hd);
+                if (force || resume) {
+                    showSyncGate(SyncProgress.PHASE_ERROR, message);
+                } else {
+                    extraAutoDelayMs = AUTO_RETRY_MS;
+                }
+                refreshSyncHint();
+                publish();
+                return;
+            }
+            if (!DaemonDisk.isPhotosBoundLive(root) && !root.canWrite()) {
+                message = localized.getString(R.string.photos_sync_local_user);
+                if (force || resume) {
+                    showSyncGate(SyncProgress.PHASE_ERROR, message);
+                } else {
+                    extraAutoDelayMs = AUTO_RETRY_MS;
+                }
+                refreshSyncHint();
+                publish();
+                return;
+            }
+            Network network = resolveVesperaNetwork();
+            if (network == null && !isVesperaConnected() && !canReachVesperaFtp(null)) {
+                message = localized.getString(R.string.photos_sync_need_vespera);
+                if (force && !resume) {
+                    showSyncGate(SyncProgress.PHASE_ERROR, message);
+                } else if (resume) {
+                    syncStatus = localized.getString(R.string.photo_sync_resume_wait_vespera);
+                    message = syncStatus;
+                    refreshSyncHint();
+                    extraAutoDelayMs = AUTO_RETRY_MS;
+                } else {
+                    extraAutoDelayMs = AUTO_RETRY_MS;
+                }
+                publish();
+                return;
+            }
+            synchronized (syncLock) {
+                if (syncing) return;
+                syncing = true;
+            }
+            try {
+                if (!force && !resume) syncStore.recordAttempt();
+                syncStore.markInProgress(this);
+                pauseRequested.set(false);
+                lastProgress = new SyncProgress();
+                lastProgress.active = true;
+                lastProgress.phase = SyncProgress.PHASE_LIST;
+                lastProgress.detail = resume
+                        ? localized.getString(R.string.photo_sync_resume)
+                        : localized.getString(R.string.photo_sync_listing);
+                refreshSyncHint();
+                if (hud != null) {
+                    hud.show();
+                    hud.bind(lastProgress);
+                }
+                publish();
+                PhotoSyncEngine.Result result = PhotoSyncEngine.sync(network, root, this::onEngineProgress,
+                        pauseRequested::get);
+                boolean paused = "paused".equals(result.error);
+                boolean complete = result.error == null && result.failed == 0;
+                boolean startedWork = result.downloaded > 0 || result.skipped > 0
+                        || result.deleted > 0 || PhotoSyncEngine.hasIncomplete(root);
+                if (paused) {
+                    syncStore.markInterrupted(this);
+                    syncStore.setPaused(true);
+                    lastSync = localized.getString(R.string.photo_sync_paused);
+                } else if (complete) {
+                    syncStore.clearInProgress(this);
+                } else if (!startedWork) {
+                    syncStore.clearInProgress(this);
+                } else {
+                    syncStore.markInterrupted(this);
+                }
+                if (paused) {
+                    lastSync = localized.getString(R.string.photo_sync_paused);
+                } else if (result.error != null) {
+                    syncStore.recordFailure(result.error);
+                    if ("missing-user".equals(result.error)) {
+                        lastSync = localized.getString(R.string.photos_sync_no_user);
+                    } else if ("hd-unmounted".equals(result.error)) {
+                        lastSync = localized.getString(R.string.photos_sync_need_hd);
+                    } else if ("local-user".equals(result.error)) {
+                        lastSync = localized.getString(R.string.photos_sync_local_user);
+                    } else {
+                        lastSync = localized.getString(R.string.photos_sync_error, result.error);
+                    }
+                } else {
+                    syncStore.recordSuccess(result.downloaded, result.skipped, result.deleted, result.bytes);
+                    syncStore.setPhotosPath(new File(root, "USER").getAbsolutePath());
+                    lastSync = formatSyncSummary(localized, result, new File(root, "USER"));
+                }
+                message = lastSync;
+                if (lastProgress != null) {
+                    lastProgress.active = false;
+                    lastProgress.phase = paused ? SyncProgress.PHASE_PAUSED
+                            : (result.error != null ? SyncProgress.PHASE_ERROR : SyncProgress.PHASE_DONE);
+                    lastProgress.detail = lastSync;
+                    lastProgress.etaMs = 0;
+                    if (hud != null) hud.bind(lastProgress);
+                }
+                fileCount = PhotoSyncEngine.countLocalPhotos(root);
+                refreshSyncHint();
+                publish();
+                sendBroadcast(new Intent(ACTION_PROGRESS).setPackage(getPackageName()));
+                if (hud != null && paused) hud.hideByUser();
+            } finally {
+                synchronized (syncLock) {
+                    syncing = false;
+                }
+            }
+        } finally {
+            if (syncStore != null && !syncStore.paused()) {
+                synchronized (syncLock) {
+                    if (!syncing) scheduleNextAutoSync();
+                }
+            }
         }
-        message = lastSync;
-        if (lastProgress != null) {
-            lastProgress.active = false;
-            lastProgress.phase = paused ? SyncProgress.PHASE_PAUSED
-                    : (result.error != null ? SyncProgress.PHASE_ERROR : SyncProgress.PHASE_DONE);
-            lastProgress.detail = lastSync;
-            lastProgress.etaMs = 0;
-            if (hud != null) hud.bind(lastProgress);
-        }
-        fileCount = PhotoSyncEngine.countLocalPhotos(root);
-        refreshSyncHint();
-        publish();
-        sendBroadcast(new Intent(ACTION_PROGRESS).setPackage(getPackageName()));
-        if (hud != null && paused) hud.hideByUser();
     }
 
     private void ensureMountedForSync() {
@@ -759,6 +837,8 @@ public final class PhotoSyncService extends Service {
             startFtpLocked();
             Context localized = AppLocale.wrap(this);
             message = localized.getString(R.string.photos_mount_ok, hdStore.displayName());
+            extraAutoDelayMs = 0;
+            scheduleNextAutoSync();
         }
     }
 
@@ -927,6 +1007,10 @@ public final class PhotoSyncService extends Service {
             refreshFtpStatus();
             return;
         }
+        if (telescopeFtp.isRunning() && vesperaFtpPort > 0) {
+            refreshFtpStatus();
+            return;
+        }
         vesperaFtpPort = FtpProbe.findVesperaControl(network, PhotoSyncEngine.HOST);
         if (vesperaFtpPort <= 0) {
             telescopeFtp.stop();
@@ -1071,6 +1155,7 @@ public final class PhotoSyncService extends Service {
         boolean resume = syncing || shouldResume();
         if (resume && syncStore != null) syncStore.markInterrupted(this);
         mainHandler.removeCallbacks(tick);
+        mainHandler.removeCallbacks(autoSyncAlarm);
         if (connectionReceiverRegistered) {
             try { unregisterReceiver(connectionReceiver); } catch (Exception ignored) {}
             connectionReceiverRegistered = false;
