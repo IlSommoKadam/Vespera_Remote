@@ -14,12 +14,14 @@ final class VesperaStatusSnapshot {
     final int gain;
     final int batteryPercent;
     final String batteryStatus;
+    final String challenge;
+    final int bootCount;
     final String rawJson;
 
     VesperaStatusSnapshot(String endpoint, String telescopeId, String model, String state,
             boolean initialized, String operationType, String targetName, int stackingCount,
             long exposureMicroSec, int gain, int batteryPercent, String batteryStatus,
-            String rawJson) {
+            String challenge, int bootCount, String rawJson) {
         this.endpoint = endpoint == null ? "" : endpoint;
         this.telescopeId = telescopeId == null ? "" : telescopeId;
         this.model = model == null ? "" : model;
@@ -32,11 +34,28 @@ final class VesperaStatusSnapshot {
         this.gain = gain;
         this.batteryPercent = batteryPercent;
         this.batteryStatus = batteryStatus == null ? "" : batteryStatus;
+        this.challenge = challenge == null ? "" : challenge;
+        this.bootCount = bootCount;
         this.rawJson = rawJson == null ? "" : rawJson;
     }
 
     boolean hasInstrumentFields() {
         return !telescopeId.isEmpty() || !model.isEmpty() || !state.isEmpty()
                 || !operationType.isEmpty() || !targetName.isEmpty();
+    }
+
+    boolean hasAuthFields() {
+        return !challenge.isEmpty() && !telescopeId.isEmpty();
+    }
+
+    /** Copy with challenge/bootCount from another snapshot (e.g. Socket.IO). */
+    VesperaStatusSnapshot withAuthFrom(VesperaStatusSnapshot other) {
+        if (other == null) return this;
+        String mergedChallenge = !challenge.isEmpty() ? challenge : other.challenge;
+        int mergedBoot = bootCount > 0 ? bootCount : other.bootCount;
+        String mergedId = !telescopeId.isEmpty() ? telescopeId : other.telescopeId;
+        return new VesperaStatusSnapshot(endpoint, mergedId, model, state, initialized,
+                operationType, targetName, stackingCount, exposureMicroSec, gain,
+                batteryPercent, batteryStatus, mergedChallenge, mergedBoot, rawJson);
     }
 }

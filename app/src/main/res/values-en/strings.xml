@@ -152,7 +152,7 @@
     <string name="telescope_tab_title">Telescope monitor</string>
     <string name="telescope_section_status">Instrument status</string>
     <string name="telescope_section_commands">Direct commands</string>
-    <string name="telescope_commands_hint">Without opening Singularity. Park / Stop / Init use the REST API; if the firmware returns 401, API auth is needed (phase 2). Session scheduling stays in Singularity.</string>
+    <string name="telescope_commands_hint">Without opening Singularity. Park / Stop / Init use the REST API with Ed25519 authentication. Session scheduling stays in Singularity.</string>
     <string name="telescope_btn_refresh_status">Refresh status</string>
     <string name="telescope_btn_scan_ports">Scan all ports</string>
     <string name="telescope_btn_park">Park arm</string>
@@ -161,7 +161,8 @@
     <string name="telescope_command_running">Sending command…</string>
     <string name="telescope_command_ok">%1$s: OK — %2$s</string>
     <string name="telescope_command_fail">%1$s: error — %2$s</string>
-    <string name="telescope_command_auth">Telescope requires API authentication (phase 2). Use Singularity for now.</string>
+    <string name="telescope_command_auth_challenge">API challenge unavailable: refresh status or try again in a few seconds.</string>
+    <string name="telescope_command_auth_fail">Telescope rejected API authentication (HTTP 401).</string>
     <string name="status_tab_title">Vespera status</string>
     <string name="status_tab_infra">Infrastructure</string>
     <string name="status_tab_instrument">Instrument (REST API)</string>
