@@ -76,10 +76,17 @@ public final class MainActivity extends Activity {
     private TextView actionResult;
     private Spinner languageSpinner;
     private boolean languageSpinnerReady;
+    private static final int TAB_WIFI = 0;
+    private static final int TAB_STATUS = 1;
+    private static final int TAB_PHOTOS = 2;
+
     private Button tabWifi;
+    private Button tabStatus;
     private Button tabPhotos;
     private ScrollView wifiScroll;
+    private StatusPanel statusPanel;
     private PhotoPanel photoPanel;
+    private int currentTab = TAB_WIFI;
     /** True when the saved instrument is currently seen in Wi-Fi scan. */
     private boolean savedDeviceOnline;
     /** True from Connect tap until the service reports a terminal status. */
@@ -123,6 +130,7 @@ public final class MainActivity extends Activity {
                     restoreInstrumentStatusIfKnown();
                     verifyApiPorts(true);
                     startWatchdogIfConnected();
+                    notifyStatusPanel();
                 } else if (VesperaConnectionService.STATUS_DISCONNECTED.equals(connectionStatus)
                         || VesperaConnectionService.STATUS_LOST.equals(connectionStatus)
                         || VesperaConnectionService.STATUS_UNAVAILABLE.equals(connectionStatus)) {
@@ -390,15 +398,17 @@ public final class MainActivity extends Activity {
             return insets.consumeSystemWindowInsets();
         });
 
+        statusPanel = new StatusPanel(this, density, padding);
         photoPanel = new PhotoPanel(this, density, padding);
 
         root.addView(header);
         root.addView(headerDivider);
         root.addView(tabBar);
         root.addView(wifiScroll);
+        root.addView(statusPanel.view());
         root.addView(photoPanel.view());
         setContentView(root);
-        showTab(true);
+        showTab(TAB_WIFI);
     }
 
     private LinearLayout buildTabBar(float density) {
@@ -413,31 +423,73 @@ public final class MainActivity extends Activity {
         tabWifi = new Button(this);
         tabWifi.setAllCaps(false);
         tabWifi.setText(R.string.tab_wifi);
-        tabWifi.setOnClickListener(v -> showTab(true));
+        tabWifi.setOnClickListener(v -> showTab(TAB_WIFI));
+        tabStatus = new Button(this);
+        tabStatus.setAllCaps(false);
+        tabStatus.setText(R.string.tab_status);
+        tabStatus.setOnClickListener(v -> showTab(TAB_STATUS));
         tabPhotos = new Button(this);
         tabPhotos.setAllCaps(false);
         tabPhotos.setText(R.string.tab_photos);
-        tabPhotos.setOnClickListener(v -> showTab(false));
+        tabPhotos.setOnClickListener(v -> showTab(TAB_PHOTOS));
 
         LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        tabLp.setMarginEnd((int) (6 * density));
+        tabLp.setMarginEnd((int) (4 * density));
         tabWifi.setLayoutParams(tabLp);
         LinearLayout.LayoutParams tabLp2 = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        tabPhotos.setLayoutParams(tabLp2);
+        tabLp2.setMarginEnd((int) (4 * density));
+        tabStatus.setLayoutParams(tabLp2);
+        LinearLayout.LayoutParams tabLp3 = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tabPhotos.setLayoutParams(tabLp3);
         tabBar.addView(tabWifi);
+        tabBar.addView(tabStatus);
         tabBar.addView(tabPhotos);
         return tabBar;
     }
 
-    private void showTab(boolean wifi) {
-        if (wifiScroll != null) wifiScroll.setVisibility(wifi ? View.VISIBLE : View.GONE);
-        if (photoPanel != null) {
-            photoPanel.view().setVisibility(wifi ? View.GONE : View.VISIBLE);
+    private void showTab(int tab) {
+        if (currentTab == TAB_STATUS && tab != TAB_STATUS && statusPanel != null) {
+            statusPanel.onHidden();
         }
-        styleTab(tabWifi, wifi);
-        styleTab(tabPhotos, !wifi);
+        if (currentTab == TAB_PHOTOS && tab != TAB_PHOTOS && photoPanel != null) {
+            photoPanel.onPause();
+        }
+        currentTab = tab;
+        if (wifiScroll != null) {
+            wifiScroll.setVisibility(tab == TAB_WIFI ? View.VISIBLE : View.GONE);
+        }
+        if (statusPanel != null) {
+            statusPanel.view().setVisibility(tab == TAB_STATUS ? View.VISIBLE : View.GONE);
+        }
+        if (photoPanel != null) {
+            photoPanel.view().setVisibility(tab == TAB_PHOTOS ? View.VISIBLE : View.GONE);
+        }
+        styleTab(tabWifi, tab == TAB_WIFI);
+        styleTab(tabStatus, tab == TAB_STATUS);
+        styleTab(tabPhotos, tab == TAB_PHOTOS);
+        if (tab == TAB_STATUS && statusPanel != null) {
+            syncStatusPanelHost();
+            statusPanel.onVisible();
+        } else if (tab == TAB_PHOTOS && photoPanel != null) {
+            photoPanel.onResume();
+        }
+    }
+
+    private void syncStatusPanelHost() {
+        if (statusPanel == null) return;
+        String host = hostInput != null ? hostInput.getText().toString().trim() : "";
+        if (host.isEmpty()) host = "10.0.0.1";
+        statusPanel.setHost(host);
+        statusPanel.setApiPort(lastDetectedApiPort);
+    }
+
+    private void notifyStatusPanel() {
+        if (statusPanel == null) return;
+        syncStatusPanelHost();
+        statusPanel.onConnectionChanged();
     }
 
     private void styleTab(Button tab, boolean selected) {
@@ -839,6 +891,7 @@ public final class MainActivity extends Activity {
         InstrumentWatchdog.rememberPort(port);
         hostInput.setText("10.0.0.1");
         portInput.setText(String.valueOf(port));
+        notifyStatusPanel();
     }
 
     private void cancelPortVerification() {
@@ -904,6 +957,7 @@ public final class MainActivity extends Activity {
                         StatusTexts.singularity(this, statusCode)));
             }
             updateSingularityStatusBar(statusCode);
+            notifyStatusPanel();
         });
     }
 
@@ -1162,10 +1216,11 @@ public final class MainActivity extends Activity {
             instrumentStatusReceiverRegistered = true;
         }
         refreshVesperaScan();
-        if (photoPanel != null) photoPanel.onResume();
+        if (photoPanel != null && currentTab == TAB_PHOTOS) photoPanel.onResume();
     }
 
     @Override protected void onDestroy() {
+        if (statusPanel != null) statusPanel.shutdown();
         stopWatchdog();
         if (instrumentWatchdog != null) {
             instrumentWatchdog.shutdown();
@@ -1189,7 +1244,8 @@ public final class MainActivity extends Activity {
             unregisterReceiver(instrumentStatusReceiver);
             instrumentStatusReceiverRegistered = false;
         }
-        if (photoPanel != null) photoPanel.onPause();
+        if (photoPanel != null && currentTab == TAB_PHOTOS) photoPanel.onPause();
+        if (statusPanel != null) statusPanel.onHidden();
         super.onPause();
     }
 }

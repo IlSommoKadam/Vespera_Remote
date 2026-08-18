@@ -39,6 +39,7 @@ L'app mantiene una richiesta Wi-Fi generica e chiede al daemon root `tools/vespe
 | 0.6.19 | 66 | A sync conclusa: riepilogo Tutto OK / errori, cartelle, file e dimensioni (finestra resta aperta) |
 | 0.6.20 | 67 | Al riavvio app: ripresa automatica dei trasferimenti sospesi/in pausa |
 | 0.6.21 | 68 | Un solo daemon (init, niente secondo wrapper); restart senza smontare l’HD; bind ripristinato se manca; sync foto automatica 24h ogni 2 h |
+| 0.6.22 | 69 | Tab **Stato**: infrastruttura (Wi‑Fi, API, FTP, Singularity) + lettura REST `/v1`/`/v2/app/status` con aggiornamento ogni 15 s |
 
 Il daemon deve essere avviato come root sul Pi dopo il boot; l'app comunica con esso tramite `net.req` / `disk.req` nella propria directory esterna.
 
