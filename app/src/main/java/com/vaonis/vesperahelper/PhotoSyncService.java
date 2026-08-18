@@ -981,7 +981,9 @@ public final class PhotoSyncService extends Service {
         String scopeUrls = joinUrls(ftpUrls(scopePort));
         String diskUrls = joinUrls(ftpUrls(diskPort));
         return localized.getString(R.string.photo_ftp_hint_two,
-                scopeUrls, diskUrls, localized.getString(R.string.photos_ftp_anonymous));
+                scopeUrls, diskUrls, localized.getString(R.string.photos_ftp_anonymous))
+                + "\n\n" + localized.getString(R.string.photo_user_folder,
+                VesperaPortInventory.userFolderUrl());
     }
 
     private List<String> ftpUrls(int port) {

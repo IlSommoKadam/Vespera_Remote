@@ -188,6 +188,13 @@ final class PhotoPanel {
         scroll.setVisibility(View.GONE);
         refreshMountButtons();
         refreshOverlayRow();
+        refreshUserFolderHint();
+    }
+
+    void refreshUserFolderHint() {
+        ftpHint.setText(activity.getString(R.string.photo_ftp_hint) + "\n\n"
+                + activity.getString(R.string.photo_user_folder,
+                VesperaPortInventory.userFolderUrl()));
     }
 
     View view() {
@@ -206,6 +213,7 @@ final class PhotoPanel {
         activity.startForegroundService(new Intent(activity, PhotoSyncService.class)
                 .setAction(PhotoSyncService.ACTION_LIST_DISKS));
         refreshOverlayRow();
+        refreshUserFolderHint();
     }
 
     void onPause() {
@@ -238,7 +246,10 @@ final class PhotoPanel {
             }
             if (ftp != null) ftpStatus.setText(ftp);
             String hint = intent.getStringExtra(PhotoSyncService.EXTRA_FTP_HINT);
-            if (hint != null && !hint.isEmpty()) ftpHint.setText(hint);
+            if (hint != null && !hint.isEmpty()) {
+                ftpHint.setText(hint + "\n\n" + activity.getString(R.string.photo_user_folder,
+                        VesperaPortInventory.userFolderUrl()));
+            }
             if (selected != null && !selected.isEmpty()) selectedId = selected;
             if (disks != null) bindDisks(PhotoSyncService.parseDisks(disks));
             savedLabel.setText(savedText());

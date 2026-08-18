@@ -16,7 +16,9 @@ final class FtpProbe {
     private static final String TAG = "VesperaFtpProbe";
     static final int HD_PREFERRED = 2121;
     static final int TELESCOPE_PREFERRED = 2122;
-    static final int[] VESPERA_CONTROL = {21, 2121, 2221, 8021};
+    static final int[] VESPERA_FTP_PORTS = {21, 2121, 2221, 8021};
+    /** @deprecated use {@link #VESPERA_FTP_PORTS} */
+    static final int[] VESPERA_CONTROL = VESPERA_FTP_PORTS;
     private static final int[] LISTEN_FALLBACK = {2121, 2122, 2123, 2124, 2125, 2126, 2127};
     private static volatile int cachedVesperaPort = -1;
 
@@ -26,12 +28,20 @@ final class FtpProbe {
         return cachedVesperaPort;
     }
 
+    static void rememberVesperaPort(int port) {
+        if (port > 0) cachedVesperaPort = port;
+    }
+
+    static void clearCache() {
+        cachedVesperaPort = -1;
+    }
+
     static int findVesperaControl(Network network, String host) {
         if (host == null || host.isEmpty()) return -1;
         if (cachedVesperaPort > 0 && isFtpControl(network, host, cachedVesperaPort)) {
             return cachedVesperaPort;
         }
-        for (int port : VESPERA_CONTROL) {
+        for (int port : VESPERA_FTP_PORTS) {
             if (isFtpControl(network, host, port)) {
                 cachedVesperaPort = port;
                 Log.i(TAG, "vespera FTP control on " + host + ":" + port);

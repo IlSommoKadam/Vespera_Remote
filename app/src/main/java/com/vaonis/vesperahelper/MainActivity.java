@@ -77,14 +77,15 @@ public final class MainActivity extends Activity {
     private Spinner languageSpinner;
     private boolean languageSpinnerReady;
     private static final int TAB_WIFI = 0;
-    private static final int TAB_STATUS = 1;
-    private static final int TAB_PHOTOS = 2;
+    private static final int TAB_PHOTOS = 1;
+    private static final int TAB_TELESCOPE = 2;
 
     private Button tabWifi;
-    private Button tabStatus;
     private Button tabPhotos;
+    private Button tabTelescope;
     private ScrollView wifiScroll;
-    private StatusPanel statusPanel;
+    private TextView portInventory;
+    private TelescopePanel telescopePanel;
     private PhotoPanel photoPanel;
     private int currentTab = TAB_WIFI;
     /** True when the saved instrument is currently seen in Wi-Fi scan. */
@@ -130,11 +131,15 @@ public final class MainActivity extends Activity {
                     restoreInstrumentStatusIfKnown();
                     verifyApiPorts(true);
                     startWatchdogIfConnected();
-                    notifyStatusPanel();
+                    notifyTelescopePanel();
                 } else if (VesperaConnectionService.STATUS_DISCONNECTED.equals(connectionStatus)
                         || VesperaConnectionService.STATUS_LOST.equals(connectionStatus)
                         || VesperaConnectionService.STATUS_UNAVAILABLE.equals(connectionStatus)) {
                     lastDetectedApiPort = -1;
+                    VesperaPortScanner.clear();
+                    if (portInventory != null) {
+                        portInventory.setText(R.string.port_inventory_idle);
+                    }
                     cancelPortVerification();
                     stopWatchdog();
                     InstrumentWatchdog.clearSnapshot();
@@ -354,6 +359,11 @@ public final class MainActivity extends Activity {
         styleRaisedButton(restartSingularity, UiStyle.TERRACOTTA, true);
         actionResult = new TextView(this);
         actionResult.setText(R.string.action_result_idle);
+        portInventory = new TextView(this);
+        portInventory.setText(R.string.port_inventory_idle);
+        portInventory.setTextSize(13);
+        UiStyle.applyRecessed(portInventory, 0xFFECEFF1);
+        UiStyle.spaceBelow(portInventory, density);
         refreshConnectButtons();
         layout.addView(status);
         layout.addView(connectionInfo);
@@ -388,6 +398,7 @@ public final class MainActivity extends Activity {
         layout.addView(hostInput);
         layout.addView(portInput);
         layout.addView(verify);
+        layout.addView(portInventory);
         layout.addView(checkInstrument);
         layout.addView(restartSingularity);
         layout.addView(actionResult);
@@ -398,15 +409,16 @@ public final class MainActivity extends Activity {
             return insets.consumeSystemWindowInsets();
         });
 
-        statusPanel = new StatusPanel(this, density, padding);
+        telescopePanel = new TelescopePanel(this, density, padding);
+        telescopePanel.setPortScanListener(() -> verifyApiPorts(false));
         photoPanel = new PhotoPanel(this, density, padding);
 
         root.addView(header);
         root.addView(headerDivider);
         root.addView(tabBar);
         root.addView(wifiScroll);
-        root.addView(statusPanel.view());
         root.addView(photoPanel.view());
+        root.addView(telescopePanel.view());
         setContentView(root);
         showTab(TAB_WIFI);
     }
@@ -424,14 +436,14 @@ public final class MainActivity extends Activity {
         tabWifi.setAllCaps(false);
         tabWifi.setText(R.string.tab_wifi);
         tabWifi.setOnClickListener(v -> showTab(TAB_WIFI));
-        tabStatus = new Button(this);
-        tabStatus.setAllCaps(false);
-        tabStatus.setText(R.string.tab_status);
-        tabStatus.setOnClickListener(v -> showTab(TAB_STATUS));
         tabPhotos = new Button(this);
         tabPhotos.setAllCaps(false);
         tabPhotos.setText(R.string.tab_photos);
         tabPhotos.setOnClickListener(v -> showTab(TAB_PHOTOS));
+        tabTelescope = new Button(this);
+        tabTelescope.setAllCaps(false);
+        tabTelescope.setText(R.string.tab_telescope);
+        tabTelescope.setOnClickListener(v -> showTab(TAB_TELESCOPE));
 
         LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
@@ -440,19 +452,19 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams tabLp2 = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         tabLp2.setMarginEnd((int) (4 * density));
-        tabStatus.setLayoutParams(tabLp2);
+        tabPhotos.setLayoutParams(tabLp2);
         LinearLayout.LayoutParams tabLp3 = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        tabPhotos.setLayoutParams(tabLp3);
+        tabTelescope.setLayoutParams(tabLp3);
         tabBar.addView(tabWifi);
-        tabBar.addView(tabStatus);
         tabBar.addView(tabPhotos);
+        tabBar.addView(tabTelescope);
         return tabBar;
     }
 
     private void showTab(int tab) {
-        if (currentTab == TAB_STATUS && tab != TAB_STATUS && statusPanel != null) {
-            statusPanel.onHidden();
+        if (currentTab == TAB_TELESCOPE && tab != TAB_TELESCOPE && telescopePanel != null) {
+            telescopePanel.onHidden();
         }
         if (currentTab == TAB_PHOTOS && tab != TAB_PHOTOS && photoPanel != null) {
             photoPanel.onPause();
@@ -461,35 +473,43 @@ public final class MainActivity extends Activity {
         if (wifiScroll != null) {
             wifiScroll.setVisibility(tab == TAB_WIFI ? View.VISIBLE : View.GONE);
         }
-        if (statusPanel != null) {
-            statusPanel.view().setVisibility(tab == TAB_STATUS ? View.VISIBLE : View.GONE);
-        }
         if (photoPanel != null) {
             photoPanel.view().setVisibility(tab == TAB_PHOTOS ? View.VISIBLE : View.GONE);
         }
+        if (telescopePanel != null) {
+            telescopePanel.view().setVisibility(tab == TAB_TELESCOPE ? View.VISIBLE : View.GONE);
+        }
         styleTab(tabWifi, tab == TAB_WIFI);
-        styleTab(tabStatus, tab == TAB_STATUS);
         styleTab(tabPhotos, tab == TAB_PHOTOS);
-        if (tab == TAB_STATUS && statusPanel != null) {
-            syncStatusPanelHost();
-            statusPanel.onVisible();
-        } else if (tab == TAB_PHOTOS && photoPanel != null) {
+        styleTab(tabTelescope, tab == TAB_TELESCOPE);
+        if (tab == TAB_PHOTOS && photoPanel != null) {
             photoPanel.onResume();
+        } else if (tab == TAB_TELESCOPE && telescopePanel != null) {
+            syncTelescopePanelHost();
+            telescopePanel.onVisible();
         }
     }
 
-    private void syncStatusPanelHost() {
-        if (statusPanel == null) return;
+    private void syncTelescopePanelHost() {
+        if (telescopePanel == null) return;
         String host = hostInput != null ? hostInput.getText().toString().trim() : "";
         if (host.isEmpty()) host = "10.0.0.1";
-        statusPanel.setHost(host);
-        statusPanel.setApiPort(lastDetectedApiPort);
+        telescopePanel.setHost(host);
+        telescopePanel.setApiPort(lastDetectedApiPort);
     }
 
-    private void notifyStatusPanel() {
-        if (statusPanel == null) return;
-        syncStatusPanelHost();
-        statusPanel.onConnectionChanged();
+    private void notifyTelescopePanel() {
+        if (telescopePanel == null) return;
+        syncTelescopePanelHost();
+        telescopePanel.onConnectionChanged();
+    }
+
+    private void updatePortInventoryUi(VesperaPortScan scan) {
+        if (portInventory == null) return;
+        portInventory.setText(VesperaPortInventory.formatFull(this, scan));
+        if (photoPanel != null) {
+            photoPanel.refreshUserFolderHint();
+        }
     }
 
     private void styleTab(Button tab, boolean selected) {
@@ -837,7 +857,7 @@ public final class MainActivity extends Activity {
         refreshConnectButtons();
     }
 
-    /** Discovers Vespera API port 8083/8082. Does not start, restart, or check Singularity. */
+    /** Full port inventory (FTP 21/2121/… + API 8082/8083) and API port for Singularity. */
     private void verifyApiPorts(boolean waitForNetwork) {
         if (!isVesperaConnected()) {
             actionResult.setText(getString(R.string.action_result,
@@ -850,11 +870,14 @@ public final class MainActivity extends Activity {
         }
         portDiscoveryRunning = true;
         final int generation = ++verifyGeneration;
-        actionResult.setText(R.string.api_port_checking);
+        actionResult.setText(R.string.port_scan_running);
         VesperaConnectionService.requestDaemonRoute(this);
+        final String host = hostInput.getText().toString().trim().isEmpty()
+                ? "10.0.0.1" : hostInput.getText().toString().trim();
         probeExecutor.execute(() -> {
             try {
                 if (waitForNetwork) sleepQuietly(PORT_PROBE_INITIAL_DELAY_MS);
+                VesperaPortScan scan = null;
                 int detectedPort = -1;
                 for (int attempt = 0; attempt < PORT_PROBE_ATTEMPTS; attempt++) {
                     if (generation != verifyGeneration) return;
@@ -862,17 +885,28 @@ public final class MainActivity extends Activity {
                     Network network = VesperaConnectionService.getActiveNetwork();
                     if (network == null) break;
                     if (attempt > 0) sleepQuietly(PORT_PROBE_RETRY_DELAY_MS);
-                    detectedPort = InstrumentWatchdog.probeApiPort(
-                            MainActivity.this, network, attempt == 0);
-                    if (detectedPort > 0) break;
+                    scan = VesperaPortScanner.scan(network, host);
+                    detectedPort = scan.apiRestPort > 0 ? scan.apiRestPort : scan.apiSocketPort;
+                    if (detectedPort <= 0) {
+                        detectedPort = InstrumentWatchdog.probeApiPort(
+                                MainActivity.this, network, attempt == 0);
+                    }
+                    if (detectedPort > 0 || scan.openCount() > 0) break;
                 }
+                final VesperaPortScan finalScan = scan;
                 final int result = detectedPort;
                 mainHandler.post(() -> {
                     if (generation != verifyGeneration) return;
                     if (!isVesperaConnected()) return;
+                    if (finalScan != null) {
+                        updatePortInventoryUi(finalScan);
+                    }
                     applyDetectedPort(result);
                     if (result > 0) {
-                        actionResult.setText(getString(R.string.api_port_detected, result));
+                        actionResult.setText(getString(R.string.port_scan_done_api, result));
+                    } else if (finalScan != null && finalScan.openCount() > 0) {
+                        actionResult.setText(getString(R.string.port_scan_done_partial,
+                                finalScan.openCount()));
                     } else {
                         actionResult.setText(R.string.api_port_not_found);
                     }
@@ -891,7 +925,7 @@ public final class MainActivity extends Activity {
         InstrumentWatchdog.rememberPort(port);
         hostInput.setText("10.0.0.1");
         portInput.setText(String.valueOf(port));
-        notifyStatusPanel();
+        notifyTelescopePanel();
     }
 
     private void cancelPortVerification() {
@@ -957,7 +991,7 @@ public final class MainActivity extends Activity {
                         StatusTexts.singularity(this, statusCode)));
             }
             updateSingularityStatusBar(statusCode);
-            notifyStatusPanel();
+            notifyTelescopePanel();
         });
     }
 
@@ -1049,6 +1083,10 @@ public final class MainActivity extends Activity {
         autoConnectPending = false;
         connectRequested = false;
         lastDetectedApiPort = -1;
+        VesperaPortScanner.clear();
+        if (portInventory != null) {
+            portInventory.setText(R.string.port_inventory_idle);
+        }
         cancelPortVerification();
         stopWatchdog();
         InstrumentWatchdog.clearSnapshot();
@@ -1220,7 +1258,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
-        if (statusPanel != null) statusPanel.shutdown();
+        if (telescopePanel != null) telescopePanel.shutdown();
         stopWatchdog();
         if (instrumentWatchdog != null) {
             instrumentWatchdog.shutdown();
@@ -1245,7 +1283,7 @@ public final class MainActivity extends Activity {
             instrumentStatusReceiverRegistered = false;
         }
         if (photoPanel != null && currentTab == TAB_PHOTOS) photoPanel.onPause();
-        if (statusPanel != null) statusPanel.onHidden();
+        if (telescopePanel != null) telescopePanel.onHidden();
         super.onPause();
     }
 }
