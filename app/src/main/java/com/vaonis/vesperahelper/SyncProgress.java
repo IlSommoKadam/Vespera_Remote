@@ -2,10 +2,11 @@ package com.vaonis.vesperahelper;
 
 import java.util.Locale;
 
-/** Snapshot of a USER photo sync run (transfer / verify / delete). */
+/** Snapshot of a USER photo sync run (transfer / disk flush / verify / delete). */
 final class SyncProgress {
     static final String PHASE_LIST = "list";
     static final String PHASE_DOWNLOAD = "download";
+    static final String PHASE_DISK = "disk";
     static final String PHASE_VERIFY = "verify";
     static final String PHASE_DELETE = "delete";
     static final String PHASE_DONE = "done";
@@ -74,6 +75,8 @@ final class SyncProgress {
         switch (phase) {
             case PHASE_DOWNLOAD:
                 return context.getString(R.string.photo_sync_phase_download);
+            case PHASE_DISK:
+                return context.getString(R.string.photo_sync_phase_disk);
             case PHASE_VERIFY:
                 return context.getString(R.string.photo_sync_phase_verify);
             case PHASE_DELETE:

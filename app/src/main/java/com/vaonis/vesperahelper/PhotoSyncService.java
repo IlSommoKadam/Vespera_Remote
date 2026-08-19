@@ -76,7 +76,10 @@ public final class PhotoSyncService extends Service {
     private static final int NOTIFICATION_ID = 43;
     /** HD/FTP housekeeping only — auto-sync is scheduled separately. */
     private static final long TICK_MS = 120_000;
-    static final int STORAGE_SYNC_PERCENT = 80;
+    /** Occupied percent of Vespera internal storage (FTP /USER) that starts a photo sync. */
+    static final int STORAGE_SYNC_PERCENT = 50;
+    /** Occupied percent of the mounted USB HD that shows the disk warning. */
+    static final int HD_WARNING_PERCENT = 80;
     private static final long STORAGE_SYNC_COOLDOWN_MS = 10 * 60_000L;
     private static final long AUTO_RETRY_MS = 5 * 60_000L;
     private static final long MIN_AUTO_DELAY_MS = 5_000L;

@@ -150,6 +150,7 @@ final class CommonsFtpClient implements Closeable {
                  if (listener != null) listener.onBytes(written[0]);
              })) {
             boolean ok = ftp.retrieveFile(remotePath, counted);
+            counted.flush();
             fos.getFD().sync();
             if (!ok) {
                 //noinspection ResultOfMethodCallIgnored

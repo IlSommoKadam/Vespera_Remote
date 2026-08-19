@@ -411,7 +411,7 @@ final class TelescopePanel {
     }
 
     private String storageLabel(VesperaStatusSnapshot snap) {
-        if (snap.storageUsedPercent >= 80) {
+        if (snap.storageUsedPercent >= PhotoSyncService.STORAGE_SYNC_PERCENT) {
             String base = snap.storage.isEmpty()
                     ? (snap.storageUsedPercent + "%") : snap.storage;
             return activity.getString(R.string.status_tab_storage_full, base);
@@ -421,7 +421,7 @@ final class TelescopePanel {
         VesperaInternalStorage.Usage usage = VesperaInternalStorage.lastKnown();
         if (usage != null) photoUsage = usage;
         if (photoUsage != null && !photoUsage.label.isEmpty()) {
-            if (photoUsage.usedPercent >= 80) {
+            if (photoUsage.usedPercent >= PhotoSyncService.STORAGE_SYNC_PERCENT) {
                 return activity.getString(R.string.status_tab_storage_full, photoUsage.label);
             }
             return photoUsage.label;

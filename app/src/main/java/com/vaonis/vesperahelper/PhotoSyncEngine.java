@@ -1,9 +1,14 @@
 package com.vaonis.vesperahelper;
 
 import android.net.Network;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
 import android.util.Log;
 
 import java.io.File;
+import java.io.FileDescriptor;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -16,8 +21,9 @@ import java.util.function.BooleanSupplier;
 
 /**
  * Pull of Vespera {@code /USER} photos onto the mounted USB HD.
- * After all copies are size-verified, matching remotes are deleted. Progress includes
- * bytes transferred and an ETA based on measured throughput.
+ * Each file is copied, flushed to the USB device, size-verified, then deleted
+ * on the instrument — not in a batch at the end. Progress includes bytes
+ * transferred and an ETA based on measured throughput.
  */
 public final class PhotoSyncEngine {
     private static final String TAG = "VesperaSync";
@@ -125,11 +131,8 @@ public final class PhotoSyncEngine {
             int failed = 0;
             long bytes = 0;
             Set<String> dirs = new HashSet<>();
-            List<CommonsFtpClient.Entry> pendingDelete = new ArrayList<>();
             java.util.LinkedHashMap<String, FileLine> tracked = new java.util.LinkedHashMap<>();
 
-            progress.phase = SyncProgress.PHASE_DOWNLOAD;
-            publish(listener, progress);
             int index = 0;
             for (CommonsFtpClient.Entry entry : photos) {
                 if (isPaused(pause)) return pauseResult(progress, listener);
@@ -146,120 +149,115 @@ public final class PhotoSyncEngine {
                 progress.skipped = skipped;
                 progress.deleted = deleted;
                 progress.failed = failed;
+                progress.phase = SyncProgress.PHASE_DOWNLOAD;
                 publish(listener, progress);
 
+                boolean copiedNow = false;
                 if (local.exists() && local.isFile() && remoteSize > 0 && local.length() == remoteSize) {
                     skipped++;
                     progress.skipped = skipped;
-                    if (remoteSize > 0) progress.doneBytes += remoteSize;
+                    progress.doneBytes += remoteSize;
                     refreshEta(progress, speed);
-                    pendingDelete.add(entry);
-                    tracked.put(entry.path, fileLine(entry, remoteSize, "skipped"));
                     publish(listener, progress);
-                    continue;
-                }
-                if (remoteSize > 0) {
-                    File parent = local.getParentFile();
-                    long free = parent != null ? parent.getFreeSpace() : localRoot.getFreeSpace();
-                    if (free > 0 && free < remoteSize + 1_048_576L) {
+                } else {
+                    if (remoteSize > 0) {
+                        File parent = local.getParentFile();
+                        long free = parent != null ? parent.getFreeSpace() : localRoot.getFreeSpace();
+                        if (free > 0 && free < remoteSize + 1_048_576L) {
+                            failed++;
+                            progress.failed = failed;
+                            tracked.put(entry.path, fileLine(entry, remoteSize, "failed"));
+                            Log.w(TAG, "not enough space for " + entry.path);
+                            continue;
+                        }
+                    }
+                    try {
+                        speed.resetFile();
+                        final long already = progress.doneBytes;
+                        ftp.retrieve(entry.path, local, transferred -> {
+                            if (isPaused(pause)) throw new IOException("paused");
+                            progress.fileBytes = transferred;
+                            progress.doneBytes = already + transferred;
+                            speed.sample(transferred);
+                            refreshEta(progress, speed);
+                            publish(listener, progress);
+                        });
+                        long expect = remoteSize > 0 ? remoteSize : local.length();
+                        if (!local.isFile() || local.length() != expect) {
+                            failed++;
+                            progress.failed = failed;
+                            tracked.put(entry.path, fileLine(entry, expect, "failed"));
+                            Log.w(TAG, "size mismatch " + entry.path + " local="
+                                    + (local.exists() ? local.length() : -1) + " remote=" + expect);
+                            if (local.exists()) {
+                                //noinspection ResultOfMethodCallIgnored
+                                local.delete();
+                            }
+                            continue;
+                        }
+                        copiedNow = true;
+                        downloaded++;
+                        bytes += local.length();
+                        progress.copied = downloaded;
+                        progress.fileBytes = local.length();
+                        if (remoteSize <= 0) {
+                            progress.doneBytes = already + local.length();
+                            progress.totalBytes += local.length();
+                        } else {
+                            progress.doneBytes = already + local.length();
+                        }
+                        refreshEta(progress, speed);
+                        publish(listener, progress);
+                    } catch (IOException failureEx) {
+                        if (isPaused(pause) || "paused".equals(failureEx.getMessage())) {
+                            return pauseResult(progress, listener);
+                        }
                         failed++;
                         progress.failed = failed;
                         tracked.put(entry.path, fileLine(entry, remoteSize, "failed"));
-                        Log.w(TAG, "not enough space for " + entry.path);
+                        Log.w(TAG, "sync " + entry.path, failureEx);
                         continue;
                     }
                 }
-                try {
-                    speed.resetFile();
-                    final long already = progress.doneBytes;
-                    ftp.retrieve(entry.path, local, transferred -> {
-                        if (isPaused(pause)) throw new IOException("paused");
-                        progress.fileBytes = transferred;
-                        progress.doneBytes = already + transferred;
-                        speed.sample(transferred);
-                        refreshEta(progress, speed);
-                        publish(listener, progress);
-                    });
-                    long expect = remoteSize > 0 ? remoteSize : local.length();
-                    if (!local.isFile() || local.length() != expect) {
-                        failed++;
-                        progress.failed = failed;
-                        tracked.put(entry.path, fileLine(entry, expect, "failed"));
-                        Log.w(TAG, "size mismatch " + entry.path + " local="
-                                + (local.exists() ? local.length() : -1) + " remote=" + expect);
-                        if (local.exists()) {
-                            //noinspection ResultOfMethodCallIgnored
-                            local.delete();
-                        }
-                        continue;
-                    }
-                    downloaded++;
-                    bytes += local.length();
-                    progress.copied = downloaded;
-                    progress.fileBytes = local.length();
-                    if (remoteSize <= 0) {
-                        progress.doneBytes = already + local.length();
-                        progress.totalBytes += local.length();
-                    } else {
-                        progress.doneBytes = already + local.length();
-                    }
-                    refreshEta(progress, speed);
-                    pendingDelete.add(entry);
-                    tracked.put(entry.path, fileLine(entry, local.length(), "copied"));
-                    publish(listener, progress);
-                } catch (IOException failureEx) {
-                    if (isPaused(pause) || "paused".equals(failureEx.getMessage())) {
-                        return pauseResult(progress, listener);
-                    }
+
+                if (isPaused(pause)) return pauseResult(progress, listener);
+                progress.phase = SyncProgress.PHASE_DISK;
+                publish(listener, progress);
+                if (!syncFileToDisk(local)) {
                     failed++;
                     progress.failed = failed;
-                    tracked.put(entry.path, fileLine(entry, remoteSize, "failed"));
-                    Log.w(TAG, "sync " + entry.path, failureEx);
+                    tracked.put(entry.path, fileLine(entry, local.length(), "failed"));
+                    Log.w(TAG, "disk sync fail " + entry.path);
+                    continue;
                 }
-            }
 
-            progress.phase = SyncProgress.PHASE_VERIFY;
-            progress.fileTotal = pendingDelete.size();
-            List<CommonsFtpClient.Entry> confirmed = new ArrayList<>();
-            index = 0;
-            for (CommonsFtpClient.Entry entry : pendingDelete) {
                 if (isPaused(pause)) return pauseResult(progress, listener);
-                index++;
-                File local = new File(userDir, relativeUserPath(entry.path));
-                long remoteSize = entry.size > 0 ? entry.size : ftp.sizeOf(entry.path);
-                progress.fileIndex = index;
-                progress.fileName = entry.name;
-                progress.fileSize = Math.max(0, remoteSize);
-                progress.fileBytes = local.isFile() ? local.length() : 0;
+                progress.phase = SyncProgress.PHASE_VERIFY;
+                long localSize = durableLength(local);
+                progress.fileBytes = Math.max(0, localSize);
                 publish(listener, progress);
-                if (local.isFile() && (remoteSize <= 0 || local.length() == remoteSize)) {
-                    confirmed.add(entry);
-                } else {
+                if (localSize < 0 || (remoteSize > 0 && localSize != remoteSize)) {
                     failed++;
                     progress.failed = failed;
                     tracked.put(entry.path, fileLine(entry, remoteSize, "failed"));
                     Log.w(TAG, "verify fail " + entry.path + " local="
-                            + (local.exists() ? local.length() : -1) + " remote=" + remoteSize);
-                    if (local.exists() && remoteSize > 0 && local.length() != remoteSize) {
+                            + localSize + " remote=" + remoteSize);
+                    if (local.exists() && remoteSize > 0 && localSize != remoteSize) {
                         //noinspection ResultOfMethodCallIgnored
                         local.delete();
                     }
+                    continue;
                 }
-            }
 
-            progress.phase = SyncProgress.PHASE_DELETE;
-            progress.fileTotal = confirmed.size();
-            index = 0;
-            for (CommonsFtpClient.Entry entry : confirmed) {
                 if (isPaused(pause)) return pauseResult(progress, listener);
-                index++;
-                progress.fileIndex = index;
-                progress.fileName = entry.name;
-                progress.fileBytes = 0;
-                progress.fileSize = 0;
+                progress.phase = SyncProgress.PHASE_DELETE;
                 publish(listener, progress);
-                if (deleteRemote(ftp, entry.path)) deleted++;
-                progress.deleted = deleted;
+                if (deleteRemote(ftp, entry.path)) {
+                    deleted++;
+                    progress.deleted = deleted;
+                }
+                long trackedSize = remoteSize > 0 ? remoteSize : Math.max(0, localSize);
+                tracked.put(entry.path, fileLine(entry, trackedSize, copiedNow ? "copied" : "skipped"));
                 publish(listener, progress);
             }
 
@@ -402,6 +400,60 @@ public final class PhotoSyncEngine {
             else if (isPhoto(child.getName())) n++;
         }
         return n;
+    }
+
+    /**
+     * Makes one file durable on the USB HD before the remote original is deleted:
+     * {@code fsync} of the file and its directory, then the process-wide {@code sync()}.
+     */
+    private static boolean syncFileToDisk(File file) {
+        if (file == null || !file.isFile()) return false;
+        try (FileInputStream in = new FileInputStream(file)) {
+            in.getFD().sync();
+        } catch (IOException failure) {
+            Log.w(TAG, "fsync file " + file, failure);
+            return false;
+        }
+        File parent = file.getParentFile();
+        if (parent != null) {
+            FileDescriptor dirFd = null;
+            try {
+                dirFd = Os.open(parent.getAbsolutePath(), OsConstants.O_RDONLY, 0);
+                Os.fsync(dirFd);
+            } catch (ErrnoException dirFail) {
+                Log.w(TAG, "fsync dir " + parent + ": " + dirFail);
+            } finally {
+                if (dirFd != null) {
+                    try {
+                        Os.close(dirFd);
+                    } catch (ErrnoException ignored) {
+                    }
+                }
+            }
+        }
+        try {
+            Process process = new ProcessBuilder("sync").redirectErrorStream(true).start();
+            process.getInputStream().close();
+            int code = process.waitFor();
+            if (code != 0) {
+                Log.w(TAG, "sync exit " + code);
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            Log.w(TAG, "sync interrupted");
+        } catch (IOException failure) {
+            Log.w(TAG, "sync()", failure);
+        }
+        return true;
+    }
+
+    private static long durableLength(File file) {
+        if (file == null) return -1;
+        try {
+            return Os.stat(file.getAbsolutePath()).st_size;
+        } catch (ErrnoException ignored) {
+            return file.isFile() ? file.length() : -1;
+        }
     }
 
     private static boolean deleteRemote(CommonsFtpClient ftp, String path) {

@@ -233,7 +233,7 @@
     <string name="status_tab_field_error">Error</string>
     <string name="status_tab_field_storage">Internal photos</string>
     <string name="status_tab_field_disk">Hard disk</string>
-    <string name="status_tab_storage_full">%1$s — sync (≥80%%)</string>
+    <string name="status_tab_storage_full">%1$s — sync (≥50%%)</string>
     <string name="status_tab_storage_checking">checking FTP…</string>
     <string name="status_tab_storage_ftp_fail">FTP: %1$s</string>
     <string name="status_tab_field_battery">Battery</string>
@@ -297,6 +297,7 @@
     <string name="photo_sync_paused_until_next">Paused until %1$s (next schedule). Tap Continue to resume sooner.</string>
     <string name="photo_sync_phase_list">Listing files on the Vespera…</string>
     <string name="photo_sync_phase_download">Transfer</string>
+    <string name="photo_sync_phase_disk">Flushing to disk</string>
     <string name="photo_sync_phase_verify">Size verification</string>
     <string name="photo_sync_phase_delete">Deleting on the Vespera</string>
     <string name="photo_sync_phase_done">Completed</string>

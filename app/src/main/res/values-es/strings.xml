@@ -233,7 +233,7 @@
     <string name="status_tab_field_error">Error</string>
     <string name="status_tab_field_storage">Fotos internas</string>
     <string name="status_tab_field_disk">Disco duro</string>
-    <string name="status_tab_storage_full">%1$s — sync (≥80%%)</string>
+    <string name="status_tab_storage_full">%1$s — sync (≥50%%)</string>
     <string name="status_tab_storage_checking">comprobando FTP…</string>
     <string name="status_tab_storage_ftp_fail">FTP: %1$s</string>
     <string name="status_tab_field_battery">Batería</string>
@@ -297,6 +297,7 @@
     <string name="photo_sync_paused_until_next">En pausa hasta las %1$s (próximo horario). Continuar para reanudar antes.</string>
     <string name="photo_sync_phase_list">Listando archivos en el Vespera…</string>
     <string name="photo_sync_phase_download">Transferencia</string>
+    <string name="photo_sync_phase_disk">Escritura en disco</string>
     <string name="photo_sync_phase_verify">Verificación de tamaño</string>
     <string name="photo_sync_phase_delete">Borrado en el Vespera</string>
     <string name="photo_sync_phase_done">Completada</string>

@@ -749,7 +749,7 @@ final class PhotoPanel {
 
     private void refreshHdSpace() {
         hdSpace = DaemonDisk.photosSpace(activity);
-        if (hdSpace.known && hdSpace.usedPercent < PhotoSyncService.STORAGE_SYNC_PERCENT) {
+        if (hdSpace.known && hdSpace.usedPercent < PhotoSyncService.HD_WARNING_PERCENT) {
             diskWarningAccepted = false;
             dismissDiskWarning(true);
         }
@@ -762,7 +762,7 @@ final class PhotoPanel {
     private void maybeShowDiskWarning() {
         if (!visible || activity.isFinishing()) return;
         if (hdSpace == null || !hdSpace.known
-                || hdSpace.usedPercent < PhotoSyncService.STORAGE_SYNC_PERCENT) {
+                || hdSpace.usedPercent < PhotoSyncService.HD_WARNING_PERCENT) {
             return;
         }
         if (diskWarningAccepted || diskWarningIgnoredThisVisit) return;
