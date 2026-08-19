@@ -15,7 +15,7 @@ final class VesperaCommandClient {
         STOP("/v1/general/stopObservation"),
         RESUME("/v1/general/startObservation"),
         INIT("/v1/general/startAutoInit"),
-        SHUTDOWN("/v1/general/shutdown");
+        SHUTDOWN("/v1/board/requestShutdown");
 
         final String path;
 
@@ -64,7 +64,12 @@ final class VesperaCommandClient {
         }
         String[] paths;
         if (command == Command.SHUTDOWN) {
-            paths = new String[] { command.path, "/v1/general/powerOff", "/v1/device/shutdown" };
+            paths = new String[] {
+                    command.path,
+                    "/v1/general/shutdown",
+                    "/v1/general/powerOff",
+                    "/v1/device/shutdown"
+            };
         } else if (command == Command.RESUME) {
             paths = new String[] { "/v1/general/resumeObservation", command.path };
         } else {
