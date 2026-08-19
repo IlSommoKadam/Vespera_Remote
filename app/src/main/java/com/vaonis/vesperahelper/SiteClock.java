@@ -58,6 +58,7 @@ final class SiteClock {
                 ntpOk = true;
                 applySystemClock(context, zoneId, ntpMs);
                 store.recordClockSync(ntpMs, true);
+                SystemActivityLog.dropFuture(context);
                 Log.i(TAG, "ntp ok tz=" + zoneId + " ms=" + ntpMs);
             } catch (Exception failure) {
                 Log.w(TAG, "ntp failed: " + failure.getMessage());

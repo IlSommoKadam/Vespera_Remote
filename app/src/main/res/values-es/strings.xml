@@ -183,8 +183,18 @@
     <string name="telescope_swu_pick_missing_dir">La carpeta externa no está disponible.</string>
     <string name="telescope_swu_pick_missing">No se encontró ningún archivo `vespera-*.swu` en la carpeta `files/` de la app. Copia el SWU al Pi y vuelve a intentarlo.</string>
     <string name="telescope_swu_pick_title">Selecciona firmware Vespera (.swu)</string>
+    <string name="telescope_swu_pick_waiting">Abre el selector y elige el archivo `vespera-*.swu` del disco o del PC.</string>
+    <string name="telescope_swu_pick_cancelled">Selección de firmware cancelada.</string>
+    <string name="telescope_swu_pick_no_app">No hay selector de archivos en este dispositivo.</string>
+    <string name="telescope_swu_checking">Comprobando checksum del archivo…</string>
+    <string name="telescope_swu_copy_fail">No se puede leer el archivo seleccionado.</string>
+    <string name="telescope_swu_checksum_ok">Checksum OK — SHA-256: %1$s (%2$d archivos).</string>
+    <string name="telescope_swu_checksum_fail">Checksum SWU no válido: %1$s</string>
+    <string name="telescope_swu_invalid_cpio">SWU inválido (archivo CPIO dañado).</string>
+    <string name="telescope_swu_missing_desc">SWU inválido (falta `sw-description` o los hash).</string>
+    <string name="telescope_swu_empty">El archivo seleccionado está vacío.</string>
     <string name="telescope_swu_confirm_title">Actualizar firmware (peligro)</string>
-    <string name="telescope_swu_confirm_message">¿Actualizar el instrumento con `{ %1$s }`?\n\nUsa solo un archivo Vespera correcto. Una actualización incorrecta puede dejar el instrumento inutilizable.</string>
+    <string name="telescope_swu_confirm_message">¿Actualizar el instrumento con `{ %1$s }`?\n\nTamaño: %2$s\nSHA-256: %3$s\nChecksum interno: OK (%4$d archivos)\n\nUsa solo un archivo Vespera correcto. Una actualización incorrecta puede dejar el instrumento inutilizable.</string>
     <string name="telescope_swu_running">Subiendo firmware (SWU)…</string>
     <string name="telescope_swu_no_status">El estado del instrumento no está disponible.</string>
     <string name="telescope_swu_block_observing">Bloqueado: el instrumento está observando/adquiriendo.</string>
@@ -371,6 +381,7 @@
     <string name="photos_sync_need_vespera">@string/photo_sync_need_wifi</string>
     <string name="photos_sync_night">sync nocturna activa</string>
     <string name="photos_sync_next">Próxima sync automática: %1$s (cada %2$s h). La noche termina a las %3$s</string>
+    <string name="photos_sync_overdue">Sync automática atrasada (prevista a las %1$s, cada %2$s h). La noche termina a las %3$s</string>
     <string name="photos_sync_file">@string/photo_sync_file</string>
     <string name="photos_sync_no_user">Falta la carpeta USER en el Vespera.</string>
     <string name="photos_sync_local_user">HD no escribible: se perdió el bind USB. Pulsa Montar o reintenta tras reiniciar el daemon.</string>

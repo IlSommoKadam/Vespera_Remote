@@ -1,5 +1,6 @@
 package com.vaonis.vesperahelper;
 
+import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -56,6 +57,7 @@ public final class PhotoSyncService extends Service {
     public static final String ACTION_SHOW_WINDOW = "com.vaonis.vesperahelper.PHOTO_SHOW_WINDOW";
     public static final String ACTION_SYNC_CLOCK = "com.vaonis.vesperahelper.PHOTO_SYNC_CLOCK";
     public static final String ACTION_APPLY_SETTINGS = "com.vaonis.vesperahelper.PHOTO_APPLY_SETTINGS";
+    public static final String ACTION_AUTO_SYNC = "com.vaonis.vesperahelper.PHOTO_AUTO_SYNC";
     public static final String EXTRA_SPEC = "spec";
     public static final String EXTRA_DISK_ID = "disk_id";
     public static final String EXTRA_DISKS = "disks";
@@ -75,6 +77,7 @@ public final class PhotoSyncService extends Service {
 
     private static final String TAG = "VesperaPhotos";
     private static final int NOTIFICATION_ID = 43;
+    private static final int AUTO_SYNC_ALARM_REQ = 44;
     /** HD/FTP housekeeping only — auto-sync is scheduled separately. */
     private static final long TICK_MS = 120_000;
     /** Occupied percent of Vespera internal storage (FTP /USER) that starts a photo sync. */
@@ -118,6 +121,7 @@ public final class PhotoSyncService extends Service {
     private volatile long extraAutoDelayMs;
     private long lastStorageSyncAt;
     private boolean connectionReceiverRegistered;
+    private boolean clockReceiverRegistered;
     private final BroadcastReceiver connectionReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             String status = intent.getStringExtra(VesperaConnectionService.EXTRA_STATUS);
@@ -131,6 +135,17 @@ public final class PhotoSyncService extends Service {
                     refreshFtpStatus();
                     publish();
                 });
+            }
+        }
+    };
+    /** Reschedule RTC alarm after manual/NTP clock or timezone changes. */
+    private final BroadcastReceiver clockReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (intent == null) return;
+            String action = intent.getAction();
+            if (Intent.ACTION_TIME_CHANGED.equals(action)
+                    || Intent.ACTION_TIMEZONE_CHANGED.equals(action)) {
+                scheduleNextAutoSync();
             }
         }
     };
@@ -258,6 +273,17 @@ public final class PhotoSyncService extends Service {
             }
             connectionReceiverRegistered = true;
         }
+        if (!clockReceiverRegistered) {
+            IntentFilter clockFilter = new IntentFilter();
+            clockFilter.addAction(Intent.ACTION_TIME_CHANGED);
+            clockFilter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(clockReceiver, clockFilter, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(clockReceiver, clockFilter);
+            }
+            clockReceiverRegistered = true;
+        }
         worker.execute(() -> {
             refreshClockAndSun(false);
             refreshMountStatus();
@@ -337,6 +363,7 @@ public final class PhotoSyncService extends Service {
             }
             if (hud != null) hud.hideByUser();
             mainHandler.removeCallbacks(autoSyncAlarm);
+            cancelRtcAlarm();
             publish();
         } else if (ACTION_PAUSE_UNTIL_SCHEDULE.equals(action)) {
             pauseRequested.set(true);
@@ -361,6 +388,8 @@ public final class PhotoSyncService extends Service {
         } else if (ACTION_APPLY_SETTINGS.equals(action)) {
             worker.execute(this::applySystemSettingsLocked);
             mainHandler.post(this::rescheduleFromSettings);
+        } else if (ACTION_AUTO_SYNC.equals(action)) {
+            syncExecutor.execute(() -> maybeAutoSync(false, SystemActivityLog.KIND_PHOTO_SYNC));
         }
         return START_STICKY;
     }
@@ -687,10 +716,13 @@ public final class PhotoSyncService extends Service {
         }
         long now = System.currentTimeMillis();
         long nextAt = syncStore.nextAutoAt(now);
-        boolean nextIsDay = syncStore.isDaytime(nextAt);
+        boolean nextIsDay = syncStore.isDaytime(Math.max(nextAt, now));
         float intervalHours = nextIsDay ? syncStore.dayIntervalHours() : syncStore.nightIntervalHours();
         String nextNightEnd = formatClock(syncStore.nextNightEndAt(now));
-        syncStatus = localized.getString(R.string.photos_sync_next,
+        int label = (syncStore.lastAt() > 0 || syncStore.lastAttemptAt() > 0) && nextAt <= now
+                ? R.string.photos_sync_overdue
+                : R.string.photos_sync_next;
+        syncStatus = localized.getString(label,
                 formatClock(nextAt),
                 PhotoSyncStore.formatIntervalHours(intervalHours),
                 nextNightEnd);
@@ -709,19 +741,74 @@ public final class PhotoSyncService extends Service {
             mainHandler.post(this::scheduleNextAutoSync);
             return;
         }
-        mainHandler.removeCallbacks(autoSyncAlarm);
-        if (!SystemSettingsStore.from(this).photoSync()) return;
-        if (syncStore == null || syncStore.paused()) return;
+        if (!SystemSettingsStore.from(this).photoSync()
+                || syncStore == null || syncStore.paused()) {
+            mainHandler.removeCallbacks(autoSyncAlarm);
+            cancelRtcAlarm();
+            return;
+        }
         synchronized (syncLock) {
             if (syncing) return;
         }
+        mainHandler.removeCallbacks(autoSyncAlarm);
         long now = System.currentTimeMillis();
-        long untilDue = syncStore.nextAutoAt(now) - now;
-        long delay = Math.max(untilDue, extraAutoDelayMs);
+        long extra = extraAutoDelayMs;
         extraAutoDelayMs = 0;
-        if (delay < MIN_AUTO_DELAY_MS) delay = MIN_AUTO_DELAY_MS;
+        long slotAt = syncStore.nextAutoAt(now);
+        long fireAt = Math.max(slotAt, now + extra);
+        long delay = fireAt - now;
+        if (delay < MIN_AUTO_DELAY_MS) {
+            if (fireAt <= now) {
+                delay = MIN_AUTO_DELAY_MS;
+                fireAt = now + delay;
+            } else {
+                delay = Math.max(delay, 0L);
+            }
+        }
         mainHandler.postDelayed(autoSyncAlarm, delay);
-        Log.i(TAG, "next auto-sync in " + (delay / 1000L) + "s");
+        setRtcAlarm(fireAt);
+        Log.i(TAG, "next auto-sync in " + (delay / 1000L) + "s at "
+                + formatClock(fireAt));
+    }
+
+    /**
+     * Wall-clock wakeup for the next :00 slot. Handler.postDelayed uses uptime,
+     * which freezes in sleep and then leaves the UI stuck on a past hour.
+     */
+    private void setRtcAlarm(long atMs) {
+        AlarmManager alarm = getSystemService(AlarmManager.class);
+        if (alarm == null) return;
+        PendingIntent pending = autoSyncPendingIntent();
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarm.canScheduleExactAlarms()) {
+                alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, pending);
+            } else {
+                alarm.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, pending);
+            }
+        } catch (SecurityException ignored) {
+            try {
+                alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, pending);
+            } catch (Exception failure) {
+                Log.w(TAG, "rtc auto-sync alarm", failure);
+            }
+        } catch (Exception failure) {
+            Log.w(TAG, "rtc auto-sync alarm", failure);
+        }
+    }
+
+    private void cancelRtcAlarm() {
+        AlarmManager alarm = getSystemService(AlarmManager.class);
+        if (alarm == null) return;
+        try {
+            alarm.cancel(autoSyncPendingIntent());
+        } catch (Exception ignored) {
+        }
+    }
+
+    private PendingIntent autoSyncPendingIntent() {
+        Intent intent = new Intent(this, PhotoSyncService.class).setAction(ACTION_AUTO_SYNC);
+        return PendingIntent.getForegroundService(this, AUTO_SYNC_ALARM_REQ, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
     private void scheduleHourlyStorageCheck() {
@@ -1552,6 +1639,10 @@ public final class PhotoSyncService extends Service {
         if (connectionReceiverRegistered) {
             try { unregisterReceiver(connectionReceiver); } catch (Exception ignored) {}
             connectionReceiverRegistered = false;
+        }
+        if (clockReceiverRegistered) {
+            try { unregisterReceiver(clockReceiver); } catch (Exception ignored) {}
+            clockReceiverRegistered = false;
         }
         ftpServer.stop();
         telescopeFtp.stop();

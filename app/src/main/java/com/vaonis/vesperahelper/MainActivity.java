@@ -9,6 +9,7 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.location.LocationManager;
 import android.net.Network;
+import android.net.Uri;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
 import android.os.Build;
@@ -44,6 +45,7 @@ public final class MainActivity extends Activity {
     static final String EXTRA_FROM_BOOT = "from_boot";
     private static final int LOCATION_REQUEST_CODE = 100;
     private static final int SCAN_PERMISSION_REQUEST_CODE = 102;
+    static final int REQUEST_PICK_SWU = 210;
     private WifiManager wifiManager;
     private LocationManager locationManager;
     private VesperaDeviceStore deviceStore;
@@ -1252,6 +1254,13 @@ public final class MainActivity extends Activity {
             lp.bottomMargin = Math.round(8 * density);
             button.setLayoutParams(lp);
         }
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_PICK_SWU) return;
+        Uri uri = (resultCode == RESULT_OK && data != null) ? data.getData() : null;
+        if (telescopePanel != null) telescopePanel.onSwuPicked(uri);
     }
 
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] grants) {

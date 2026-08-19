@@ -5,6 +5,8 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 /** Ring buffer of the last automatic activities, newest first. */
@@ -46,6 +48,15 @@ final class SystemActivityLog {
     private static final String PREFS = "vespera_system_log";
     private static final String KEY = "entries";
     private static final Object LOCK = new Object();
+    /** Ignore entries left in the future after NTP / timezone clock jumps. */
+    private static final long FUTURE_SKEW_MS = 60_000L;
+    private static final Comparator<String> NEWEST_FIRST = (a, b) -> {
+        Entry ea = parse(a);
+        Entry eb = parse(b);
+        long ta = ea == null ? 0L : ea.at;
+        long tb = eb == null ? 0L : eb.at;
+        return Long.compare(tb, ta);
+    };
 
     private SystemActivityLog() {}
 
@@ -54,22 +65,26 @@ final class SystemActivityLog {
         long at = System.currentTimeMillis();
         String line = at + "|" + sanitize(kind) + "|" + sanitize(detail);
         synchronized (LOCK) {
-            SharedPreferences prefs = context.getApplicationContext()
-                    .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            List<String> lines = split(prefs.getString(KEY, ""));
+            SharedPreferences prefs = prefs(context);
+            List<String> lines = prune(split(prefs.getString(KEY, "")), at);
             lines.add(0, line);
-            while (lines.size() > MAX) lines.remove(lines.size() - 1);
-            StringBuilder blob = new StringBuilder();
-            for (int i = 0; i < lines.size(); i++) {
-                if (i > 0) blob.append('\n');
-                blob.append(lines.get(i));
-            }
-            prefs.edit().putString(KEY, blob.toString()).commit();
+            persist(prefs, lines);
         }
-        try {
-            context.sendBroadcast(new Intent(ACTION).setPackage(context.getPackageName()));
-        } catch (Exception ignored) {
+        notifyChanged(context);
+    }
+
+    /** Drop timestamps that became "future" after the system clock moved backwards. */
+    static void dropFuture(Context context) {
+        if (context == null) return;
+        boolean changed;
+        synchronized (LOCK) {
+            SharedPreferences prefs = prefs(context);
+            List<String> lines = split(prefs.getString(KEY, ""));
+            List<String> kept = prune(lines, System.currentTimeMillis());
+            changed = kept.size() != lines.size();
+            if (changed) persist(prefs, kept);
         }
+        if (changed) notifyChanged(context);
     }
 
     static List<Entry> latest(Context context) {
@@ -77,15 +92,56 @@ final class SystemActivityLog {
         if (context == null) return out;
         String blob;
         synchronized (LOCK) {
-            blob = context.getApplicationContext()
-                    .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .getString(KEY, "");
+            SharedPreferences prefs = prefs(context);
+            List<String> lines = split(prefs.getString(KEY, ""));
+            List<String> kept = prune(lines, System.currentTimeMillis());
+            if (kept.size() != lines.size()) persist(prefs, kept);
+            blob = join(kept);
         }
         for (String line : split(blob)) {
             Entry entry = parse(line);
             if (entry != null) out.add(entry);
         }
+        Collections.sort(out, (a, b) -> Long.compare(b.at, a.at));
+        if (out.size() > MAX) return new ArrayList<>(out.subList(0, MAX));
         return out;
+    }
+
+    private static SharedPreferences prefs(Context context) {
+        return context.getApplicationContext()
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    private static void persist(SharedPreferences prefs, List<String> lines) {
+        Collections.sort(lines, NEWEST_FIRST);
+        while (lines.size() > MAX) lines.remove(lines.size() - 1);
+        prefs.edit().putString(KEY, join(lines)).commit();
+    }
+
+    private static List<String> prune(List<String> lines, long now) {
+        List<String> kept = new ArrayList<>();
+        for (String line : lines) {
+            Entry entry = parse(line);
+            if (entry != null && entry.at <= now + FUTURE_SKEW_MS) kept.add(line);
+        }
+        return kept;
+    }
+
+    private static String join(List<String> lines) {
+        StringBuilder blob = new StringBuilder();
+        for (int i = 0; i < lines.size(); i++) {
+            if (i > 0) blob.append('\n');
+            blob.append(lines.get(i));
+        }
+        return blob.toString();
+    }
+
+    private static void notifyChanged(Context context) {
+        try {
+            Context app = context.getApplicationContext();
+            app.sendBroadcast(new Intent(ACTION).setPackage(app.getPackageName()));
+        } catch (Exception ignored) {
+        }
     }
 
     private static Entry parse(String line) {

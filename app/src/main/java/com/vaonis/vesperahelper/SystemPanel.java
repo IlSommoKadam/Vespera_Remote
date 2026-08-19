@@ -7,6 +7,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Typeface;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -43,8 +45,10 @@ final class SystemPanel {
     private final Row keepAlive;
     private final TextView saveResult;
     private final TextView logBody;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private boolean visible;
     private boolean logReceiverRegistered;
+    private static final long LOG_REFRESH_MS = 2_000L;
 
     SystemPanel(Activity activity, float density, int padding) {
         this.activity = activity;
@@ -123,10 +127,13 @@ final class SystemPanel {
             }
             logReceiverRegistered = true;
         }
+        mainHandler.removeCallbacks(logTick);
+        mainHandler.postDelayed(logTick, LOG_REFRESH_MS);
     }
 
     void onHidden() {
         visible = false;
+        mainHandler.removeCallbacks(logTick);
         if (logReceiverRegistered) {
             try {
                 activity.unregisterReceiver(logReceiver);
@@ -215,7 +222,8 @@ final class SystemPanel {
                     logKindLabel(entry.kind),
                     logDetailLabel(entry.kind, entry.detail)));
         }
-        logBody.setText(text.toString());
+        String next = text.toString();
+        if (!next.contentEquals(logBody.getText())) logBody.setText(next);
     }
 
     private String logKindLabel(String kind) {
@@ -489,12 +497,23 @@ final class SystemPanel {
         return body;
     }
 
+    private final Runnable logTick = new Runnable() {
+        @Override public void run() {
+            if (!visible) return;
+            refreshInfo();
+            refreshLog();
+            mainHandler.postDelayed(this, LOG_REFRESH_MS);
+        }
+    };
+
     private final BroadcastReceiver logReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            if (visible) {
-                scroll.pin();
+            if (!visible) return;
+            activity.runOnUiThread(() -> {
+                if (!visible) return;
+                refreshInfo();
                 refreshLog();
-            }
+            });
         }
     };
 

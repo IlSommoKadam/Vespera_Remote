@@ -183,8 +183,18 @@
     <string name="telescope_swu_pick_missing_dir">External folder is not available.</string>
     <string name="telescope_swu_pick_missing">No `vespera-*.swu` found in the app `files/` folder. Copy the SWU to the Pi and retry.</string>
     <string name="telescope_swu_pick_title">Select Vespera firmware (.swu)</string>
+    <string name="telescope_swu_pick_waiting">Open the picker and choose the `vespera-*.swu` file from disk or PC.</string>
+    <string name="telescope_swu_pick_cancelled">Firmware selection cancelled.</string>
+    <string name="telescope_swu_pick_no_app">No file picker is available on this device.</string>
+    <string name="telescope_swu_checking">Checking file checksum…</string>
+    <string name="telescope_swu_copy_fail">Unable to read the selected file.</string>
+    <string name="telescope_swu_checksum_ok">Checksum OK — SHA-256: %1$s (%2$d files).</string>
+    <string name="telescope_swu_checksum_fail">Invalid SWU checksum: %1$s</string>
+    <string name="telescope_swu_invalid_cpio">Invalid SWU file (damaged CPIO archive).</string>
+    <string name="telescope_swu_missing_desc">Invalid SWU file (missing `sw-description` or hashes).</string>
+    <string name="telescope_swu_empty">The selected file is empty.</string>
     <string name="telescope_swu_confirm_title">Update firmware (danger)</string>
-    <string name="telescope_swu_confirm_message">Update the instrument with `{ %1$s }`?\n\nUse only a correct Vespera file. Wrong updates may leave the instrument unusable.</string>
+    <string name="telescope_swu_confirm_message">Update the instrument with `{ %1$s }`?\n\nSize: %2$s\nSHA-256: %3$s\nInternal checksum: OK (%4$d files)\n\nUse only a correct Vespera file. Wrong updates may leave the instrument unusable.</string>
     <string name="telescope_swu_running">Uploading firmware (SWU)…</string>
     <string name="telescope_swu_no_status">Instrument status is not available.</string>
     <string name="telescope_swu_block_observing">Blocked: the instrument is observing/acquiring.</string>
@@ -371,6 +381,7 @@
     <string name="photos_sync_need_vespera">@string/photo_sync_need_wifi</string>
     <string name="photos_sync_night">night sync active</string>
     <string name="photos_sync_next">Next automatic sync: %1$s (every %2$s h). Night ends at %3$s</string>
+    <string name="photos_sync_overdue">Automatic sync overdue (due at %1$s, every %2$s h). Night ends at %3$s</string>
     <string name="photos_sync_file">@string/photo_sync_file</string>
     <string name="photos_sync_no_user">USER folder missing on the Vespera.</string>
     <string name="photos_sync_local_user">HD not writable: USB bind lost. Tap Mount or retry after restarting the daemon.</string>

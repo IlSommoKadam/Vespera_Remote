@@ -2,11 +2,16 @@ package com.vaonis.vesperahelper;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
+import android.database.Cursor;
 import android.net.Network;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.provider.OpenableColumns;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -17,10 +22,12 @@ import android.widget.TextView;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.text.DateFormat;
 import java.util.Date;
-import java.util.ArrayList;
 import java.util.Locale;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
@@ -684,49 +691,172 @@ final class TelescopePanel {
             commandResult.setText(activity.getString(R.string.status_tab_need_wifi));
             return;
         }
-        File dir = activity.getExternalFilesDir(null);
-        if (dir == null) dir = activity.getFilesDir();
-        if (dir == null) {
-            commandResult.setText(activity.getString(R.string.telescope_swu_pick_missing_dir));
-            return;
-        }
-        ArrayList<File> candidates = new ArrayList<>();
-        File[] listed = dir.listFiles();
-        if (listed != null) {
-            for (File f : listed) {
-                if (f == null) continue;
-                String n = f.getName();
-                if (!f.isFile()) continue;
-                String lower = n.toLowerCase(Locale.US);
-                if (lower.startsWith("vespera-") && lower.endsWith(".swu")) {
-                    candidates.add(f);
-                }
+        commandResult.setText(activity.getString(R.string.telescope_swu_pick_waiting));
+        Intent openDoc = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        openDoc.addCategory(Intent.CATEGORY_OPENABLE);
+        openDoc.setType("*/*");
+        openDoc.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            activity.startActivityForResult(
+                    Intent.createChooser(openDoc,
+                            activity.getString(R.string.telescope_swu_pick_title)),
+                    MainActivity.REQUEST_PICK_SWU);
+        } catch (ActivityNotFoundException ignored) {
+            try {
+                Intent get = new Intent(Intent.ACTION_GET_CONTENT);
+                get.addCategory(Intent.CATEGORY_OPENABLE);
+                get.setType("*/*");
+                get.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                activity.startActivityForResult(
+                        Intent.createChooser(get,
+                                activity.getString(R.string.telescope_swu_pick_title)),
+                        MainActivity.REQUEST_PICK_SWU);
+            } catch (ActivityNotFoundException missing) {
+                commandResult.setText(activity.getString(R.string.telescope_swu_pick_no_app));
             }
         }
-        if (candidates.isEmpty()) {
-            commandResult.setText(activity.getString(R.string.telescope_swu_pick_missing));
+    }
+
+    void onSwuPicked(Uri uri) {
+        if (uri == null) {
+            commandResult.setText(activity.getString(R.string.telescope_swu_pick_cancelled));
             return;
         }
-        String[] names = new String[candidates.size()];
-        for (int i = 0; i < candidates.size(); i++) names[i] = candidates.get(i).getName();
-        final int x = scroll.getScrollX();
-        final int y = scroll.getScrollY();
-        AlertDialog dialog = new AlertDialog.Builder(activity)
-                .setTitle(activity.getString(R.string.telescope_swu_pick_title))
-                .setItems(names, (d, which) -> {
-                    scroll.restoreTo(x, y);
-                    File chosen = candidates.get(which);
-                    confirmAction(activity.getString(R.string.telescope_swu_confirm_title),
-                            activity.getString(R.string.telescope_swu_confirm_message,
-                                    chosen == null ? "" : chosen.getName()),
-                            () -> {
-                                scroll.restoreTo(x, y);
-                                if (chosen != null) runSwuUpload(chosen);
-                            });
-                })
-                .create();
-        dialog.setOnDismissListener(d -> scroll.restoreTo(x, y));
-        dialog.show();
+        if (!commandInFlight.compareAndSet(false, true)) return;
+        setCommandsEnabled(false);
+        commandResult.setText(activity.getString(R.string.telescope_swu_checking));
+        updateWorker.execute(() -> {
+            File local = null;
+            String fail = null;
+            VesperaSwuValidator.Result check = null;
+            try {
+                local = copyPickedSwu(uri);
+                check = VesperaSwuValidator.inspect(local);
+                if (check == null || !check.ok()) {
+                    fail = checkMessage(check);
+                    deleteTempSwu(local);
+                    local = null;
+                }
+            } catch (Exception e) {
+                fail = e.getMessage() == null ? e.toString() : e.getMessage();
+                deleteTempSwu(local);
+                local = null;
+            }
+            final String error = fail;
+            final File file = local;
+            final VesperaSwuValidator.Result okCheck = check;
+            mainHandler.post(() -> {
+                commandInFlight.set(false);
+                setCommandsEnabled(true);
+                if (error != null || file == null || okCheck == null || !okCheck.ok()) {
+                    commandResult.setText(error != null ? error
+                            : activity.getString(R.string.telescope_swu_copy_fail));
+                    return;
+                }
+                commandResult.setText(activity.getString(
+                        R.string.telescope_swu_checksum_ok,
+                        okCheck.sha256, okCheck.filesChecked));
+                confirmAction(
+                        activity.getString(R.string.telescope_swu_confirm_title),
+                        activity.getString(R.string.telescope_swu_confirm_message,
+                                file.getName(),
+                                formatSize(okCheck.size),
+                                okCheck.sha256,
+                                okCheck.filesChecked),
+                        () -> runSwuUpload(file));
+            });
+        });
+    }
+
+    private File copyPickedSwu(Uri uri) throws IOException {
+        String name = queryDisplayName(uri);
+        if (name == null || name.isEmpty()) {
+            name = uri.getLastPathSegment();
+        }
+        if (name != null) {
+            int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf(':'));
+            if (slash >= 0 && slash + 1 < name.length()) name = name.substring(slash + 1);
+        }
+        if (!VesperaSwuValidator.isValidSwuName(name)) {
+            throw new IOException(activity.getString(R.string.telescope_swu_invalid_name));
+        }
+        File dir = new File(activity.getCacheDir(), "swu-upload");
+        if (!dir.exists() && !dir.mkdirs()) {
+            throw new IOException(activity.getString(R.string.telescope_swu_pick_missing_dir));
+        }
+        File[] old = dir.listFiles();
+        if (old != null) {
+            for (File f : old) {
+                if (f != null) f.delete();
+            }
+        }
+        File dest = new File(dir, name);
+        try (InputStream in = activity.getContentResolver().openInputStream(uri);
+             OutputStream out = new FileOutputStream(dest)) {
+            if (in == null) {
+                throw new IOException(activity.getString(R.string.telescope_swu_copy_fail));
+            }
+            byte[] buf = new byte[65_536];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        }
+        return dest;
+    }
+
+    private String queryDisplayName(Uri uri) {
+        Cursor cursor = null;
+        try {
+            cursor = activity.getContentResolver().query(uri,
+                    new String[] { OpenableColumns.DISPLAY_NAME }, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                int idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) {
+                    String n = cursor.getString(idx);
+                    if (n != null && !n.isEmpty()) return n;
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return null;
+    }
+
+    private String checkMessage(VesperaSwuValidator.Result r) {
+        if (r == null) return activity.getString(R.string.telescope_swu_copy_fail);
+        switch (r.kind) {
+            case BAD_NAME:
+                return activity.getString(R.string.telescope_swu_invalid_name);
+            case EMPTY:
+                return activity.getString(R.string.telescope_swu_empty);
+            case BAD_MAGIC:
+                return activity.getString(R.string.telescope_swu_invalid_magic);
+            case BAD_CPIO:
+                return activity.getString(R.string.telescope_swu_invalid_cpio);
+            case MISSING_DESC:
+                return activity.getString(R.string.telescope_swu_missing_desc);
+            case HASH_MISMATCH:
+                return activity.getString(R.string.telescope_swu_checksum_fail, r.detail);
+            case IO:
+            default:
+                return activity.getString(R.string.telescope_swu_copy_fail);
+        }
+    }
+
+    private String formatSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024L * 1024L) {
+            return String.format(Locale.US, "%.1f KB", bytes / 1024.0);
+        }
+        return String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0));
+    }
+
+    private void deleteTempSwu(File file) {
+        if (file == null) return;
+        File parent = file.getParentFile();
+        if (parent != null && "swu-upload".equals(parent.getName())) {
+            file.delete();
+        }
     }
 
     private void runSwuUpload(File swuFile) {
@@ -782,6 +912,7 @@ final class TelescopePanel {
                 commandInFlight.set(false);
                 setCommandsEnabled(true);
                 commandResult.setText(msg);
+                deleteTempSwu(file);
                 if (okFinal && visible) {
                     // Firmware updates usually reboot the instrument; status refresh
                     // will recover when the connection state changes.
