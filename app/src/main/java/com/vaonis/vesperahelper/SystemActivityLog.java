@@ -1,0 +1,132 @@
+package com.vaonis.vesperahelper;
+
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/** Ring buffer of the last automatic activities, newest first. */
+final class SystemActivityLog {
+    static final String ACTION = "com.vaonis.vesperahelper.SYSTEM_ACTIVITY_LOG";
+    static final int MAX = 10;
+
+    static final String KIND_PHOTO_SYNC = "photo_sync";
+    static final String KIND_STORAGE_SYNC = "storage_sync";
+    static final String KIND_RESUME_SYNC = "resume_sync";
+    static final String KIND_SUN_TOO_HIGH = "sun_too_high";
+    static final String KIND_HD_MOUNT = "hd_mount";
+    static final String KIND_CLOCK_NTP = "clock_ntp";
+    static final String KIND_BOOT = "boot_start";
+    static final String KIND_WIFI = "wifi_connect";
+    static final String KIND_SINGULARITY = "singularity_start";
+    static final String KIND_FTP = "ftp_local";
+    static final String KIND_KEEP_ALIVE = "keep_alive";
+
+    static final String DETAIL_OK = "ok";
+    static final String DETAIL_FAIL = "fail";
+    static final String DETAIL_PAUSED = "paused";
+    static final String DETAIL_NOT_STATUS = "not_status";
+    static final String DETAIL_SHUTDOWN_OK = "shutdown_ok";
+    static final String DETAIL_SHUTDOWN_FAIL = "shutdown_fail";
+
+    static final class Entry {
+        final long at;
+        final String kind;
+        final String detail;
+
+        Entry(long at, String kind, String detail) {
+            this.at = at;
+            this.kind = kind == null ? "" : kind;
+            this.detail = detail == null ? "" : detail;
+        }
+    }
+
+    private static final String PREFS = "vespera_system_log";
+    private static final String KEY = "entries";
+    private static final Object LOCK = new Object();
+
+    private SystemActivityLog() {}
+
+    static void record(Context context, String kind, String detail) {
+        if (context == null || kind == null || kind.isEmpty()) return;
+        long at = System.currentTimeMillis();
+        String line = at + "|" + sanitize(kind) + "|" + sanitize(detail);
+        synchronized (LOCK) {
+            SharedPreferences prefs = context.getApplicationContext()
+                    .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            List<String> lines = split(prefs.getString(KEY, ""));
+            lines.add(0, line);
+            while (lines.size() > MAX) lines.remove(lines.size() - 1);
+            StringBuilder blob = new StringBuilder();
+            for (int i = 0; i < lines.size(); i++) {
+                if (i > 0) blob.append('\n');
+                blob.append(lines.get(i));
+            }
+            prefs.edit().putString(KEY, blob.toString()).commit();
+        }
+        try {
+            context.sendBroadcast(new Intent(ACTION).setPackage(context.getPackageName()));
+        } catch (Exception ignored) {
+        }
+    }
+
+    static List<Entry> latest(Context context) {
+        List<Entry> out = new ArrayList<>();
+        if (context == null) return out;
+        String blob;
+        synchronized (LOCK) {
+            blob = context.getApplicationContext()
+                    .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getString(KEY, "");
+        }
+        for (String line : split(blob)) {
+            Entry entry = parse(line);
+            if (entry != null) out.add(entry);
+        }
+        return out;
+    }
+
+    private static Entry parse(String line) {
+        if (line == null || line.isEmpty()) return null;
+        int first = line.indexOf('|');
+        if (first <= 0) return null;
+        int second = line.indexOf('|', first + 1);
+        try {
+            long at = Long.parseLong(line.substring(0, first));
+            String kind;
+            String detail;
+            if (second < 0) {
+                kind = line.substring(first + 1);
+                detail = "";
+            } else {
+                kind = line.substring(first + 1, second);
+                detail = line.substring(second + 1);
+            }
+            if (kind.isEmpty()) return null;
+            return new Entry(at, kind, detail);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static List<String> split(String blob) {
+        List<String> lines = new ArrayList<>();
+        if (blob == null || blob.isEmpty()) return lines;
+        int start = 0;
+        while (start <= blob.length()) {
+            int nl = blob.indexOf('\n', start);
+            String line = nl < 0 ? blob.substring(start) : blob.substring(start, nl);
+            if (!line.isEmpty()) lines.add(line);
+            if (nl < 0) break;
+            start = nl + 1;
+        }
+        return lines;
+    }
+
+    private static String sanitize(String text) {
+        if (text == null) return "";
+        return text.replace('\n', ' ').replace('|', '/').trim();
+    }
+}

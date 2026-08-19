@@ -78,13 +78,16 @@ public final class MainActivity extends Activity {
     private static final int TAB_WIFI = 0;
     private static final int TAB_PHOTOS = 1;
     private static final int TAB_TELESCOPE = 2;
+    private static final int TAB_SYSTEM = 3;
 
     private Button tabWifi;
     private Button tabPhotos;
     private Button tabTelescope;
+    private Button tabSystem;
     private ScrollView wifiScroll;
     private TelescopePanel telescopePanel;
     private PhotoPanel photoPanel;
+    private SystemPanel systemPanel;
     private int currentTab = TAB_WIFI;
     /** True when the saved instrument is currently seen in Wi-Fi scan. */
     private boolean savedDeviceOnline;
@@ -398,6 +401,7 @@ public final class MainActivity extends Activity {
 
         telescopePanel = new TelescopePanel(this, density, padding);
         photoPanel = new PhotoPanel(this, density, padding);
+        systemPanel = new SystemPanel(this, density, padding);
 
         root.addView(header);
         root.addView(headerDivider);
@@ -405,6 +409,7 @@ public final class MainActivity extends Activity {
         root.addView(wifiScroll);
         root.addView(photoPanel.view());
         root.addView(telescopePanel.view());
+        root.addView(systemPanel.view());
         setContentView(root);
         showTab(TAB_WIFI);
     }
@@ -441,6 +446,11 @@ public final class MainActivity extends Activity {
         tabTelescope.setGravity(Gravity.CENTER);
         tabTelescope.setText(R.string.tab_telescope);
         tabTelescope.setOnClickListener(v -> showTab(TAB_TELESCOPE));
+        tabSystem = new Button(this);
+        tabSystem.setAllCaps(false);
+        tabSystem.setGravity(Gravity.CENTER);
+        tabSystem.setText(R.string.tab_system);
+        tabSystem.setOnClickListener(v -> showTab(TAB_SYSTEM));
 
         LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
@@ -451,11 +461,16 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams tabLp3 = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         tabTelescope.setLayoutParams(tabLp3);
+        LinearLayout.LayoutParams tabLp4 = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tabSystem.setLayoutParams(tabLp4);
         tabBar.addView(tabWifi);
         tabBar.addView(tabDivider(density));
         tabBar.addView(tabPhotos);
         tabBar.addView(tabDivider(density));
         tabBar.addView(tabTelescope);
+        tabBar.addView(tabDivider(density));
+        tabBar.addView(tabSystem);
         wrap.addView(tabBar);
         return wrap;
     }
@@ -479,6 +494,9 @@ public final class MainActivity extends Activity {
         if (currentTab == TAB_PHOTOS && tab != TAB_PHOTOS && photoPanel != null) {
             photoPanel.onPause();
         }
+        if (currentTab == TAB_SYSTEM && tab != TAB_SYSTEM && systemPanel != null) {
+            systemPanel.onHidden();
+        }
         currentTab = tab;
         if (wifiScroll != null) {
             wifiScroll.setVisibility(tab == TAB_WIFI ? View.VISIBLE : View.GONE);
@@ -489,14 +507,20 @@ public final class MainActivity extends Activity {
         if (telescopePanel != null) {
             telescopePanel.view().setVisibility(tab == TAB_TELESCOPE ? View.VISIBLE : View.GONE);
         }
+        if (systemPanel != null) {
+            systemPanel.view().setVisibility(tab == TAB_SYSTEM ? View.VISIBLE : View.GONE);
+        }
         styleTab(tabWifi, tab == TAB_WIFI, true, false);
         styleTab(tabPhotos, tab == TAB_PHOTOS, false, false);
-        styleTab(tabTelescope, tab == TAB_TELESCOPE, false, true);
+        styleTab(tabTelescope, tab == TAB_TELESCOPE, false, false);
+        styleTab(tabSystem, tab == TAB_SYSTEM, false, true);
         if (tab == TAB_PHOTOS && photoPanel != null) {
             photoPanel.onResume();
         } else if (tab == TAB_TELESCOPE && telescopePanel != null) {
             syncTelescopePanelHost();
             telescopePanel.onVisible();
+        } else if (tab == TAB_SYSTEM && systemPanel != null) {
+            systemPanel.onVisible();
         }
     }
 
@@ -528,6 +552,8 @@ public final class MainActivity extends Activity {
         tab.setAllCaps(false);
         tab.setGravity(Gravity.CENTER);
         UiStyle.applyTab(tab, COLOR_CONNECTED, selected, roundLeft, roundRight);
+        tab.setTextSize(12);
+        tab.setMaxLines(2);
         tab.setTypeface(tab.getTypeface(), selected
                 ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
     }
@@ -692,6 +718,7 @@ public final class MainActivity extends Activity {
     }
 
     private void maybeAutoConnect() {
+        if (!SystemSettingsStore.from(this).wifiConnect()) return;
         if (!autoConnectPending
                 || !savedDeviceOnline
                 || !deviceStore.isConfigured()
@@ -700,6 +727,7 @@ public final class MainActivity extends Activity {
             return;
         }
         autoConnectPending = false;
+        SystemActivityLog.record(this, SystemActivityLog.KIND_WIFI, SystemActivityLog.DETAIL_OK);
         connect();
     }
 
@@ -975,9 +1003,17 @@ public final class MainActivity extends Activity {
     }
 
     private void startWatchdogIfConnected() {
+        if (!SystemSettingsStore.from(this).watchdog()) {
+            stopWatchdog();
+            return;
+        }
         if (isVesperaConnected()) {
             ensureWatchdog().start();
         }
+    }
+
+    void onSystemSettingsSaved() {
+        startWatchdogIfConnected();
     }
 
     private void stopWatchdog() {
@@ -1277,6 +1313,7 @@ public final class MainActivity extends Activity {
             syncTelescopePanelHost();
             telescopePanel.onVisible();
         }
+        if (systemPanel != null && currentTab == TAB_SYSTEM) systemPanel.onVisible();
     }
 
     @Override protected void onDestroy() {
@@ -1306,6 +1343,7 @@ public final class MainActivity extends Activity {
         }
         if (photoPanel != null && currentTab == TAB_PHOTOS) photoPanel.onPause();
         if (telescopePanel != null && currentTab == TAB_TELESCOPE) telescopePanel.onHidden();
+        if (systemPanel != null && currentTab == TAB_SYSTEM) systemPanel.onHidden();
         super.onPause();
     }
 }

@@ -322,6 +322,7 @@ public final class VesperaConnectionService extends Service {
     private void startSingularityAfterConnect() {
         if (!STATUS_CONNECTED.equals(lastStatus)) return;
         Log.i(TAG, "starting Singularity after Vespera connect (background)");
+        SystemActivityLog.record(this, SystemActivityLog.KIND_SINGULARITY, SystemActivityLog.DETAIL_OK);
         // Daemon starts Singularity then restores VesperaHelper to the foreground.
         requestSingularityStart(this);
     }
@@ -348,8 +349,10 @@ public final class VesperaConnectionService extends Service {
                 .putExtra(EXTRA_STATUS, status));
         getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification(text));
         if (becameConnected) {
-            mainHandler.removeCallbacks(startSingularityAfterConnect);
-            mainHandler.postDelayed(startSingularityAfterConnect, SINGULARITY_START_DELAY_MS);
+            if (SystemSettingsStore.from(this).singularityStart()) {
+                mainHandler.removeCallbacks(startSingularityAfterConnect);
+                mainHandler.postDelayed(startSingularityAfterConnect, SINGULARITY_START_DELAY_MS);
+            }
         } else if (!STATUS_CONNECTED.equals(status)
                 && !status.startsWith(STATUS_REQUESTING)) {
             mainHandler.removeCallbacks(startSingularityAfterConnect);
@@ -357,7 +360,8 @@ public final class VesperaConnectionService extends Service {
     }
 
     @Override public void onTaskRemoved(Intent rootIntent) {
-        if (!stopRequested && VesperaDeviceStore.from(this).isConfigured()) {
+        if (!stopRequested && SystemSettingsStore.from(this).keepAlive()
+                && VesperaDeviceStore.from(this).isConfigured()) {
             try {
                 startForegroundService(new Intent(this, VesperaConnectionService.class)
                         .setAction(ACTION_CONNECT));

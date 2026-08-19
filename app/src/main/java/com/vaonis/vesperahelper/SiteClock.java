@@ -20,12 +20,15 @@ final class SiteClock {
     static final class Result {
         final boolean ntpOk;
         final boolean hoursChanged;
+        final boolean ntpAttempted;
         final String timeZoneId;
         final long ntpMs;
 
-        Result(boolean ntpOk, boolean hoursChanged, String timeZoneId, long ntpMs) {
+        Result(boolean ntpOk, boolean hoursChanged, boolean ntpAttempted,
+               String timeZoneId, long ntpMs) {
             this.ntpOk = ntpOk;
             this.hoursChanged = hoursChanged;
+            this.ntpAttempted = ntpAttempted;
             this.timeZoneId = timeZoneId == null ? "" : timeZoneId;
             this.ntpMs = ntpMs;
         }
@@ -35,7 +38,7 @@ final class SiteClock {
 
     static Result sync(Context context, PhotoSyncStore store, boolean forceNtp) {
         if (store == null || !store.hasSite()) {
-            return new Result(false, false, "", 0);
+            return new Result(false, false, false, "", 0);
         }
         String zoneId = store.siteTimeZone();
         if (zoneId.isEmpty()) {
@@ -44,8 +47,10 @@ final class SiteClock {
         }
         long now = System.currentTimeMillis();
         boolean ntpOk = false;
+        boolean ntpAttempted = false;
         long ntpMs = now;
         if (forceNtp || store.clockSyncDue(now, INTERVAL_MS)) {
+            ntpAttempted = true;
             try {
                 ntpMs = NtpClient.unixTimeMs();
                 ntpOk = true;
@@ -58,7 +63,7 @@ final class SiteClock {
             }
         }
         boolean hoursChanged = store.applySunHours(ntpOk ? ntpMs : System.currentTimeMillis(), ntpOk);
-        return new Result(ntpOk, hoursChanged, zoneId, ntpMs);
+        return new Result(ntpOk, hoursChanged, ntpAttempted, zoneId, ntpMs);
     }
 
     private static void applySystemClock(Context context, String zoneId, long ntpMs) {

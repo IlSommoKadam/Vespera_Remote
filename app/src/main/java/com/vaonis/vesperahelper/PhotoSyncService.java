@@ -55,6 +55,7 @@ public final class PhotoSyncService extends Service {
     public static final String ACTION_HIDE_WINDOW = "com.vaonis.vesperahelper.PHOTO_HIDE_WINDOW";
     public static final String ACTION_SHOW_WINDOW = "com.vaonis.vesperahelper.PHOTO_SHOW_WINDOW";
     public static final String ACTION_SYNC_CLOCK = "com.vaonis.vesperahelper.PHOTO_SYNC_CLOCK";
+    public static final String ACTION_APPLY_SETTINGS = "com.vaonis.vesperahelper.PHOTO_APPLY_SETTINGS";
     public static final String EXTRA_SPEC = "spec";
     public static final String EXTRA_DISK_ID = "disk_id";
     public static final String EXTRA_DISKS = "disks";
@@ -83,6 +84,7 @@ public final class PhotoSyncService extends Service {
     private static final long STORAGE_SYNC_COOLDOWN_MS = 10 * 60_000L;
     private static final long AUTO_RETRY_MS = 5 * 60_000L;
     private static final long MIN_AUTO_DELAY_MS = 5_000L;
+    private static final long SUN_TOO_HIGH_RETRY_MS = 10 * 60_000L;
     private static final int[] STORAGE_CHECK_MINUTES = {10, 11};
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -132,8 +134,10 @@ public final class PhotoSyncService extends Service {
             }
         }
     };
-    private final Runnable autoSyncAlarm = () -> syncExecutor.execute(() -> maybeAutoSync(false));
+    private final Runnable autoSyncAlarm = () -> syncExecutor.execute(
+            () -> maybeAutoSync(false, SystemActivityLog.KIND_PHOTO_SYNC));
     private final Runnable hourlyStorageCheck = () -> worker.execute(this::maybeCheckInternalStorage);
+    private final Runnable sunTooHighAlarm = () -> worker.execute(this::maybeCheckSunTooHigh);
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             worker.execute(() -> {
@@ -187,6 +191,7 @@ public final class PhotoSyncService extends Service {
 
     public static void syncIfStorageHigh(Context context, int usedPercent) {
         if (context == null || usedPercent < STORAGE_SYNC_PERCENT) return;
+        if (!SystemSettingsStore.from(context).storageSync()) return;
         context.startForegroundService(new Intent(context, PhotoSyncService.class)
                 .setAction(ACTION_SYNC_STORAGE));
     }
@@ -220,6 +225,11 @@ public final class PhotoSyncService extends Service {
     public static void forget(Context context) {
         context.startForegroundService(new Intent(context, PhotoSyncService.class)
                 .setAction(ACTION_FORGET));
+    }
+
+    public static void applySettings(Context context) {
+        context.startForegroundService(new Intent(context, PhotoSyncService.class)
+                .setAction(ACTION_APPLY_SETTINGS));
     }
 
     @Override public void onCreate() {
@@ -261,6 +271,7 @@ public final class PhotoSyncService extends Service {
         mainHandler.postDelayed(tick, TICK_MS);
         scheduleNextAutoSync();
         scheduleHourlyStorageCheck();
+        scheduleSunTooHighCheck();
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -279,6 +290,7 @@ public final class PhotoSyncService extends Service {
                 syncExecutor.execute(PhotoSyncService.this::resumeSuspendedIfNeeded);
             });
             scheduleNextAutoSync();
+            scheduleSunTooHighCheck();
         } else if (ACTION_REFRESH_DISKS.equals(action) || ACTION_LIST_DISKS.equals(action)) {
             worker.execute(() -> {
                 refreshClockAndSun(false);
@@ -306,7 +318,7 @@ public final class PhotoSyncService extends Service {
                 syncStore.setPaused(false);
                 syncStore.setPauseUntilSchedule(false);
             }
-            syncExecutor.execute(() -> maybeAutoSync(true));
+            syncExecutor.execute(() -> maybeAutoSync(true, null));
         } else if (ACTION_SYNC_STORAGE.equals(action)) {
             syncExecutor.execute(this::maybeSyncForFullStorage);
         } else if (ACTION_RESUME.equals(action)) {
@@ -316,7 +328,7 @@ public final class PhotoSyncService extends Service {
                 syncStore.setPauseUntilSchedule(false);
             }
             if (hud != null) hud.show();
-            syncExecutor.execute(() -> maybeAutoSync(true));
+            syncExecutor.execute(() -> maybeAutoSync(true, null));
         } else if (ACTION_PAUSE.equals(action)) {
             pauseRequested.set(true);
             if (syncStore != null) {
@@ -344,7 +356,11 @@ public final class PhotoSyncService extends Service {
                 refreshClockAndSun(true);
                 publish();
                 scheduleNextAutoSync();
+                scheduleSunTooHighCheck();
             });
+        } else if (ACTION_APPLY_SETTINGS.equals(action)) {
+            worker.execute(this::applySystemSettingsLocked);
+            mainHandler.post(this::rescheduleFromSettings);
         }
         return START_STICKY;
     }
@@ -540,6 +556,7 @@ public final class PhotoSyncService extends Service {
     }
 
     private void maybeAutoMount() {
+        if (!SystemSettingsStore.from(this).hdMount()) return;
         if (userUnmounted) return;
         if (DaemonDisk.isPhotosBoundLive(DaemonDisk.photosDir(this))) {
             if (!mounted) refreshMountStatus();
@@ -584,6 +601,8 @@ public final class PhotoSyncService extends Service {
             message = localized.getString(R.string.photos_mount_ok, hdStore.displayName());
             extraAutoDelayMs = 0;
             scheduleNextAutoSync();
+            SystemActivityLog.record(this, SystemActivityLog.KIND_HD_MOUNT,
+                    SystemActivityLog.DETAIL_OK);
         } else if (status.timeout) {
             Context localized = AppLocale.wrap(this);
             message = localized.getString(R.string.photos_daemon_timeout);
@@ -623,12 +642,18 @@ public final class PhotoSyncService extends Service {
 
     private void refreshClockAndSun(boolean forceNtp) {
         if (syncStore == null || !syncStore.hasSite()) return;
+        if (!SystemSettingsStore.from(this).clockNtp()) return;
         SiteClock.Result result = SiteClock.sync(this, syncStore, forceNtp);
+        if (result.ntpAttempted) {
+            SystemActivityLog.record(this, SystemActivityLog.KIND_CLOCK_NTP,
+                    result.ntpOk ? SystemActivityLog.DETAIL_OK : SystemActivityLog.DETAIL_FAIL);
+        }
         if (result.hoursChanged || result.ntpOk) {
             Log.i(TAG, "clock tz=" + result.timeZoneId
                     + " ntp=" + result.ntpOk
                     + " hours=" + syncStore.dayStartHour() + "-" + syncStore.dayEndHour());
             mainHandler.post(this::scheduleNextAutoSync);
+            mainHandler.post(this::scheduleSunTooHighCheck);
         }
     }
 
@@ -636,6 +661,10 @@ public final class PhotoSyncService extends Service {
         Context localized = AppLocale.wrap(this);
         if (syncing) {
             syncStatus = localized.getString(R.string.photos_sync_running);
+            return;
+        }
+        if (!SystemSettingsStore.from(this).photoSync()) {
+            syncStatus = localized.getString(R.string.system_activity_off);
             return;
         }
         if (syncStore != null && syncStore.paused()) {
@@ -681,6 +710,7 @@ public final class PhotoSyncService extends Service {
             return;
         }
         mainHandler.removeCallbacks(autoSyncAlarm);
+        if (!SystemSettingsStore.from(this).photoSync()) return;
         if (syncStore == null || syncStore.paused()) return;
         synchronized (syncLock) {
             if (syncing) return;
@@ -700,9 +730,126 @@ public final class PhotoSyncService extends Service {
             return;
         }
         mainHandler.removeCallbacks(hourlyStorageCheck);
+        if (!SystemSettingsStore.from(this).storageSync()) return;
         long delay = delayUntilNextStorageSlot();
         mainHandler.postDelayed(hourlyStorageCheck, delay);
         Log.i(TAG, "next internal-storage check in " + (delay / 1000L) + "s");
+    }
+
+    private void scheduleSunTooHighCheck() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(this::scheduleSunTooHighCheck);
+            return;
+        }
+        mainHandler.removeCallbacks(sunTooHighAlarm);
+        if (!SystemSettingsStore.from(this).sunTooHigh()) return;
+        long delay = delayUntilSunTooHighCheck();
+        if (delay < 0) delay = 60 * 60_000L;
+        if (delay < MIN_AUTO_DELAY_MS) delay = MIN_AUTO_DELAY_MS;
+        mainHandler.postDelayed(sunTooHighAlarm, delay);
+        Log.i(TAG, "next sun-too-high check in " + (delay / 1000L) + "s");
+    }
+
+    private long delayUntilSunTooHighCheck() {
+        if (syncStore == null || !syncStore.hasSite()) return -1;
+        long now = System.currentTimeMillis();
+        SystemSettingsStore settings = SystemSettingsStore.from(this);
+        long at = syncStore.nextSunTooHighCheckAt(settings.sunTooHighDay(), now);
+        if (at <= 0) return -1;
+        long delay = at - now;
+        return delay < MIN_AUTO_DELAY_MS ? MIN_AUTO_DELAY_MS : delay;
+    }
+
+    private void maybeCheckSunTooHigh() {
+        SystemSettingsStore settings = SystemSettingsStore.from(this);
+        if (!settings.sunTooHigh() || syncStore == null || !syncStore.hasSite()) {
+            scheduleSunTooHighCheck();
+            return;
+        }
+        long now = System.currentTimeMillis();
+        int today = syncStore.dayKey(now);
+        long window = syncStore.sunTooHighCheckAt(now);
+        if (window <= 0 || now < window) {
+            scheduleSunTooHighCheck();
+            return;
+        }
+        if (settings.sunTooHighDay() == today) {
+            scheduleSunTooHighCheck();
+            return;
+        }
+        if (!isVesperaConnected()) {
+            Log.i(TAG, "sun-too-high skip: Vespera offline — retry");
+            retrySunTooHighSoon();
+            return;
+        }
+        Network network = resolveVesperaNetwork();
+        if (network == null) {
+            Log.i(TAG, "sun-too-high skip: no Vespera network — retry");
+            retrySunTooHighSoon();
+            return;
+        }
+        int apiPort = -1;
+        VesperaPortScan scan = VesperaPortScanner.lastScan();
+        if (scan != null && scan.apiRestPort > 0) apiPort = scan.apiRestPort;
+        VesperaStatusSnapshot snap = VesperaStatusClient.fetch(PhotoSyncEngine.HOST, apiPort, network);
+        if (snap == null) {
+            Log.i(TAG, "sun-too-high skip: status unavailable — retry");
+            retrySunTooHighSoon();
+            return;
+        }
+        if (!snap.isSunTooHigh()) {
+            Log.i(TAG, "sun-too-high check: status is not GENERAL_SUN_TOO_HIGH ("
+                    + snap.error + " / " + snap.state + ")");
+            settings.recordSunTooHigh(today, SystemSettingsStore.SUN_RESULT_NOT_STATUS);
+            SystemActivityLog.record(this, SystemActivityLog.KIND_SUN_TOO_HIGH,
+                    SystemActivityLog.DETAIL_NOT_STATUS);
+            scheduleSunTooHighCheck();
+            return;
+        }
+        Log.i(TAG, "GENERAL_SUN_TOO_HIGH — last photo sync then shutdown");
+        settings.recordSunTooHigh(today, SystemSettingsStore.SUN_RESULT_TRIGGERED);
+        final int port = apiPort;
+        final Network net = network;
+        syncExecutor.execute(() -> lastSyncThenShutdown(today, net, port));
+        scheduleSunTooHighCheck();
+    }
+
+    private void retrySunTooHighSoon() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(this::retrySunTooHighSoon);
+            return;
+        }
+        mainHandler.removeCallbacks(sunTooHighAlarm);
+        mainHandler.postDelayed(sunTooHighAlarm, SUN_TOO_HIGH_RETRY_MS);
+        Log.i(TAG, "sun-too-high retry in " + (SUN_TOO_HIGH_RETRY_MS / 1000L) + "s");
+    }
+
+    private void lastSyncThenShutdown(int dayKey, Network network, int apiPort) {
+        pauseRequested.set(false);
+        if (syncStore != null) {
+            syncStore.setPaused(false);
+            syncStore.setPauseUntilSchedule(false);
+        }
+        maybeAutoSync(true, null);
+        Network net = network;
+        if (net == null) net = resolveVesperaNetwork();
+        VesperaCommandClient.Result result = VesperaCommandClient.send(
+                PhotoSyncEngine.HOST, apiPort, net, VesperaCommandClient.Command.SHUTDOWN);
+        String code = (result != null && result.success)
+                ? SystemSettingsStore.SUN_RESULT_SHUTDOWN_OK
+                : SystemSettingsStore.SUN_RESULT_SHUTDOWN_FAIL;
+        SystemSettingsStore.from(this).recordSunTooHigh(dayKey, code);
+        SystemActivityLog.record(this, SystemActivityLog.KIND_SUN_TOO_HIGH,
+                (result != null && result.success)
+                        ? SystemActivityLog.DETAIL_SHUTDOWN_OK
+                        : SystemActivityLog.DETAIL_SHUTDOWN_FAIL);
+        Log.i(TAG, "sun-too-high shutdown " + code
+                + (result == null ? "" : (" http=" + result.httpCode + " " + result.message)));
+        Context localized = AppLocale.wrap(this);
+        message = localized.getString(result != null && result.success
+                ? R.string.system_sun_result_shutdown_ok
+                : R.string.system_sun_result_shutdown_fail);
+        publish();
     }
 
     private long delayUntilNextStorageSlot() {
@@ -731,6 +878,7 @@ public final class PhotoSyncService extends Service {
 
     private void maybeCheckInternalStorage() {
         scheduleHourlyStorageCheck();
+        if (!SystemSettingsStore.from(this).storageSync()) return;
         if (!isVesperaConnected()) {
             Log.i(TAG, "internal storage skip: Vespera offline");
             return;
@@ -765,6 +913,7 @@ public final class PhotoSyncService extends Service {
     }
 
     private void maybeSyncForFullStorage() {
+        if (!SystemSettingsStore.from(this).storageSync()) return;
         synchronized (syncLock) {
             if (syncing) return;
         }
@@ -776,12 +925,25 @@ public final class PhotoSyncService extends Service {
         lastStorageSyncAt = now;
         Log.i(TAG, "storage ≥" + STORAGE_SYNC_PERCENT + "% — starting photo sync");
         pauseRequested.set(false);
-        maybeAutoSync(true);
+        maybeAutoSync(true, SystemActivityLog.KIND_STORAGE_SYNC);
     }
 
     private void maybeAutoSync(boolean force) {
+        maybeAutoSync(force, null);
+    }
+
+    private void maybeAutoSync(boolean force, String autoKind) {
         Context localized = AppLocale.wrap(this);
+        SystemSettingsStore settings = SystemSettingsStore.from(this);
         boolean resume = shouldResume() || (force && hasSuspendedWork());
+        if (resume && !settings.resumeSync() && !force) {
+            resume = false;
+        }
+        if (!force && !resume && !settings.photoSync()) {
+            refreshSyncHint();
+            publish();
+            return;
+        }
         synchronized (syncLock) {
             if (syncing) {
                 if ((force || resume) && hud != null) hud.show();
@@ -912,6 +1074,12 @@ public final class PhotoSyncService extends Service {
                     syncStore.setPhotosPath(new File(root, "USER").getAbsolutePath());
                     message = formatSyncSummary(localized, result, new File(root, "USER"));
                 }
+                if (autoKind != null) {
+                    String detail = paused ? SystemActivityLog.DETAIL_PAUSED
+                            : (result.error != null ? SystemActivityLog.DETAIL_FAIL
+                            : SystemActivityLog.DETAIL_OK);
+                    SystemActivityLog.record(this, autoKind, detail);
+                }
                 restoreLastSync();
                 if (message == null || message.isEmpty()) message = lastSync;
                 if (lastProgress != null) {
@@ -1005,12 +1173,13 @@ public final class PhotoSyncService extends Service {
      * was left paused, interrupted, or with leftover {@code .part} files.
      */
     private void resumeSuspendedIfNeeded() {
+        SystemSettingsStore settings = SystemSettingsStore.from(this);
         if (syncStore != null && syncStore.pauseUntilSchedule()) {
-            maybeAutoSync(false);
+            if (settings.photoSync()) maybeAutoSync(false, SystemActivityLog.KIND_PHOTO_SYNC);
             return;
         }
-        if (!hasSuspendedWork()) {
-            maybeAutoSync(false);
+        if (!settings.resumeSync() || !hasSuspendedWork()) {
+            if (settings.photoSync()) maybeAutoSync(false, SystemActivityLog.KIND_PHOTO_SYNC);
             return;
         }
         Log.i(TAG, "suspended sync detected — auto resume");
@@ -1022,7 +1191,7 @@ public final class PhotoSyncService extends Service {
         Context localized = AppLocale.wrap(this);
         syncStatus = localized.getString(R.string.photo_sync_resume);
         publish();
-        maybeAutoSync(true);
+        maybeAutoSync(true, SystemActivityLog.KIND_RESUME_SYNC);
     }
 
     private String formatSyncSummary(Context localized, PhotoSyncEngine.Result result, File localUser) {
@@ -1047,23 +1216,6 @@ public final class PhotoSyncService extends Service {
         if (result.files != null && !result.files.isEmpty()) {
             text.append('\n').append(localized.getString(R.string.photo_sync_summary_files,
                     result.files.size()));
-            int limit = Math.min(result.files.size(), 40);
-            for (int i = 0; i < limit; i++) {
-                PhotoSyncEngine.FileLine line = result.files.get(i);
-                String kind = "copied".equals(line.kind)
-                        ? localized.getString(R.string.photo_sync_kind_copied)
-                        : ("skipped".equals(line.kind)
-                        ? localized.getString(R.string.photo_sync_kind_skipped)
-                        : localized.getString(R.string.photo_sync_kind_failed));
-                String folder = "USER".equals(line.folder) ? "" : (line.folder + "/");
-                text.append('\n').append("  ").append(folder).append(line.name)
-                        .append("  ").append(PhotoSyncEngine.formatBytes(line.bytes))
-                        .append("  ").append(kind);
-            }
-            if (result.files.size() > limit) {
-                text.append('\n').append(localized.getString(R.string.photo_sync_summary_more,
-                        result.files.size() - limit));
-            }
         } else {
             text.append('\n').append(localized.getString(R.string.photo_sync_summary_empty));
         }
@@ -1137,16 +1289,42 @@ public final class PhotoSyncService extends Service {
     }
 
     private void startFtpLocked() {
+        if (!SystemSettingsStore.from(this).ftpLocal()) {
+            stopFtpLocked();
+            return;
+        }
         File root = DaemonDisk.photosDir(this);
         if (!mounted || root == null || !root.isDirectory()) return;
         if (ftpServer.isRunning()) return;
         try {
             int avoid = telescopeFtp.isRunning() ? telescopeFtp.getPort() : FtpProbe.TELESCOPE_PREFERRED;
             ftpServer.start(root, avoid);
+            if (ftpServer.isRunning()) {
+                SystemActivityLog.record(this, SystemActivityLog.KIND_FTP, SystemActivityLog.DETAIL_OK);
+            }
         } catch (Exception failure) {
             Log.w(TAG, "ftp start", failure);
         }
         refreshFtpStatus();
+    }
+
+    private void applySystemSettingsLocked() {
+        refreshClockAndSun(false);
+        refreshMountStatus();
+        if (!mounted) maybeAutoMount();
+        if (SystemSettingsStore.from(this).ftpLocal() && mounted) startFtpLocked();
+        else stopFtpLocked();
+        refreshTelescopeFtpLocked();
+        refreshSyncHint();
+        publish();
+    }
+
+    private void rescheduleFromSettings() {
+        mainHandler.removeCallbacks(autoSyncAlarm);
+        mainHandler.removeCallbacks(hourlyStorageCheck);
+        scheduleNextAutoSync();
+        scheduleHourlyStorageCheck();
+        scheduleSunTooHighCheck();
     }
 
     private void stopFtpLocked() {
@@ -1356,7 +1534,11 @@ public final class PhotoSyncService extends Service {
 
     @Override public void onTaskRemoved(Intent rootIntent) {
         if (syncStore != null) syncStore.markInterrupted(this);
-        restartSelf(shouldResume());
+        if (SystemSettingsStore.from(this).keepAlive()) {
+            SystemActivityLog.record(this, SystemActivityLog.KIND_KEEP_ALIVE,
+                    SystemActivityLog.DETAIL_OK);
+            restartSelf(SystemSettingsStore.from(this).resumeSync() && shouldResume());
+        }
         super.onTaskRemoved(rootIntent);
     }
 
@@ -1366,6 +1548,7 @@ public final class PhotoSyncService extends Service {
         mainHandler.removeCallbacks(tick);
         mainHandler.removeCallbacks(autoSyncAlarm);
         mainHandler.removeCallbacks(hourlyStorageCheck);
+        mainHandler.removeCallbacks(sunTooHighAlarm);
         if (connectionReceiverRegistered) {
             try { unregisterReceiver(connectionReceiver); } catch (Exception ignored) {}
             connectionReceiverRegistered = false;
@@ -1375,7 +1558,9 @@ public final class PhotoSyncService extends Service {
         if (hud != null) hud.hide();
         worker.shutdownNow();
         syncExecutor.shutdownNow();
-        restartSelf(resume);
+        if (SystemSettingsStore.from(this).keepAlive()) {
+            restartSelf(resume && SystemSettingsStore.from(this).resumeSync());
+        }
         super.onDestroy();
     }
 

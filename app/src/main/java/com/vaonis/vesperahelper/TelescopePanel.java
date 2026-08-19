@@ -475,6 +475,7 @@ final class TelescopePanel {
     }
 
     private void maybeSyncIfStorageFull(VesperaStatusSnapshot snap) {
+        if (!SystemSettingsStore.from(activity).storageSync()) return;
         int percent = snap == null ? -1 : snap.storageUsedPercent;
         if (percent < 0 && photoUsage != null) percent = photoUsage.usedPercent;
         if (percent < PhotoSyncService.STORAGE_SYNC_PERCENT) return;

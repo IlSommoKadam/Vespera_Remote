@@ -17,6 +17,8 @@ final class PhotoSyncStore {
     static final float DEFAULT_NIGHT_INTERVAL_HOURS = 1f;
     static final float MIN_INTERVAL_HOURS = 0.25f;
     static final float MAX_INTERVAL_HOURS = 12f;
+    /** Delay after civil sunrise before the once-a-day GENERAL_SUN_TOO_HIGH check. */
+    static final long SUN_TOO_HIGH_AFTER_SUNRISE_MS = 30 * 60_000L;
 
     private static final String PREFS = "vespera_photo_sync";
     private static final String KEY_START = "day_start_hour";
@@ -143,6 +145,47 @@ final class PhotoSyncStore {
     }
 
     boolean lastNtpOk() { return prefs.getBoolean(KEY_NTP_OK, false); }
+
+    long lastNtpAt() { return prefs.getLong(KEY_LAST_NTP, 0); }
+
+    int dayKey(long nowMs) {
+        Calendar calendar = Calendar.getInstance(zone());
+        calendar.setTimeInMillis(nowMs);
+        return calendar.get(Calendar.YEAR) * 1000 + calendar.get(Calendar.DAY_OF_YEAR);
+    }
+
+    /** Civil sunrise for the local calendar day of {@code nowMs}, or -1 if unknown/polar. */
+    long sunriseMs(long nowMs) {
+        if (!hasSite()) return -1;
+        SunTimes.Result sun = SunTimes.compute(siteLat(), siteLon(), nowMs, zone());
+        if (sun == null || sun.polar || sun.sunriseMs <= 0) return -1;
+        return sun.sunriseMs;
+    }
+
+    /** Instant of today's once-a-day sun-too-high check (sunrise + 30 min), or -1. */
+    long sunTooHighCheckAt(long nowMs) {
+        long rise = sunriseMs(nowMs);
+        if (rise <= 0) return -1;
+        return rise + SUN_TOO_HIGH_AFTER_SUNRISE_MS;
+    }
+
+    /**
+     * Next check time: today's sunrise+30 if that day was not already checked,
+     * otherwise tomorrow's sunrise+30. Returns -1 without a site.
+     */
+    long nextSunTooHighCheckAt(int lastCheckedDay, long nowMs) {
+        if (!hasSite()) return -1;
+        int today = dayKey(nowMs);
+        if (lastCheckedDay == today) {
+            Calendar calendar = Calendar.getInstance(zone());
+            calendar.setTimeInMillis(nowMs);
+            calendar.add(Calendar.DAY_OF_YEAR, 1);
+            return sunTooHighCheckAt(calendar.getTimeInMillis());
+        }
+        long window = sunTooHighCheckAt(nowMs);
+        if (window <= 0) return -1;
+        return nowMs < window ? window : nowMs;
+    }
 
     void recordClockSync(long nowMs, boolean ok) {
         prefs.edit().putLong(KEY_LAST_NTP, nowMs).putBoolean(KEY_NTP_OK, ok).commit();

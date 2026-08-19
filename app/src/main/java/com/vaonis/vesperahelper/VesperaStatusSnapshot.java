@@ -122,4 +122,11 @@ final class VesperaStatusSnapshot {
         if ("STOPPED".equals(observationStatus)) return true;
         return VesperaLastTarget.hasTarget();
     }
+
+    /** True when the instrument reports Vaonis GENERAL_SUN_TOO_HIGH. */
+    boolean isSunTooHigh() {
+        String blob = (error + " " + state + " " + operationType + " " + step + " " + rawJson)
+                .toUpperCase(java.util.Locale.US);
+        return blob.contains("GENERAL_SUN_TOO_HIGH") || blob.contains("SUN_TOO_HIGH");
+    }
 }

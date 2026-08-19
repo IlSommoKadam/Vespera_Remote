@@ -22,11 +22,17 @@ public final class BootReceiver extends BroadcastReceiver {
             return;
         }
         Log.i(TAG, "boot action=" + action);
+        SystemSettingsStore settings = SystemSettingsStore.from(context);
+        if (!settings.bootStart()) {
+            Log.i(TAG, "boot start disabled");
+            return;
+        }
         Intent ui = new Intent(context, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 .putExtra(MainActivity.EXTRA_FROM_BOOT, true);
         try {
             context.startActivity(ui);
+            SystemActivityLog.record(context, SystemActivityLog.KIND_BOOT, SystemActivityLog.DETAIL_OK);
         } catch (Exception failure) {
             Log.w(TAG, "MainActivity start failed", failure);
         }
@@ -38,8 +44,9 @@ public final class BootReceiver extends BroadcastReceiver {
         }
 
         VesperaDeviceStore device = VesperaDeviceStore.from(context);
-        if (!device.isConfigured()) {
-            Log.i(TAG, "no saved Vespera — UI only");
+        if (!settings.wifiConnect() || !device.isConfigured()) {
+            if (!device.isConfigured()) Log.i(TAG, "no saved Vespera — UI only");
+            else Log.i(TAG, "auto-connect disabled");
             return;
         }
         Intent service = new Intent(context, VesperaConnectionService.class)

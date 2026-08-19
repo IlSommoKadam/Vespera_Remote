@@ -1,0 +1,115 @@
+package com.vaonis.vesperahelper;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+
+/** Enable/disable flags for background automatic activities. Defaults keep current behaviour. */
+final class SystemSettingsStore {
+    private static final String PREFS = "vespera_system";
+    private static final String KEY_PHOTO_SYNC = "photo_sync";
+    private static final String KEY_STORAGE_SYNC = "storage_sync";
+    private static final String KEY_RESUME_SYNC = "resume_sync";
+    private static final String KEY_HD_MOUNT = "hd_mount";
+    private static final String KEY_CLOCK_NTP = "clock_ntp";
+    private static final String KEY_BOOT_START = "boot_start";
+    private static final String KEY_WIFI_CONNECT = "wifi_connect";
+    private static final String KEY_SINGULARITY_START = "singularity_start";
+    private static final String KEY_WATCHDOG = "watchdog";
+    private static final String KEY_FTP_LOCAL = "ftp_local";
+    private static final String KEY_KEEP_ALIVE = "keep_alive";
+    private static final String KEY_SUN_TOO_HIGH = "sun_too_high";
+    private static final String KEY_SUN_TOO_HIGH_DAY = "sun_too_high_day";
+    private static final String KEY_SUN_TOO_HIGH_AT = "sun_too_high_at";
+    private static final String KEY_SUN_TOO_HIGH_RESULT = "sun_too_high_result";
+
+    static final String SUN_RESULT_NOT_STATUS = "not_status";
+    static final String SUN_RESULT_TRIGGERED = "triggered";
+    static final String SUN_RESULT_SHUTDOWN_OK = "shutdown_ok";
+    static final String SUN_RESULT_SHUTDOWN_FAIL = "shutdown_fail";
+
+    static final class Snapshot {
+        boolean photoSync;
+        boolean storageSync;
+        boolean resumeSync;
+        boolean hdMount;
+        boolean clockNtp;
+        boolean bootStart;
+        boolean wifiConnect;
+        boolean singularityStart;
+        boolean watchdog;
+        boolean ftpLocal;
+        boolean keepAlive;
+        boolean sunTooHigh;
+    }
+
+    private final SharedPreferences prefs;
+
+    private SystemSettingsStore(SharedPreferences prefs) {
+        this.prefs = prefs;
+    }
+
+    static SystemSettingsStore from(Context context) {
+        return new SystemSettingsStore(
+                context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE));
+    }
+
+    Snapshot snapshot() {
+        Snapshot snap = new Snapshot();
+        snap.photoSync = photoSync();
+        snap.storageSync = storageSync();
+        snap.resumeSync = resumeSync();
+        snap.hdMount = hdMount();
+        snap.clockNtp = clockNtp();
+        snap.bootStart = bootStart();
+        snap.wifiConnect = wifiConnect();
+        snap.singularityStart = singularityStart();
+        snap.watchdog = watchdog();
+        snap.ftpLocal = ftpLocal();
+        snap.keepAlive = keepAlive();
+        snap.sunTooHigh = sunTooHigh();
+        return snap;
+    }
+
+    void save(Snapshot snap) {
+        if (snap == null) return;
+        prefs.edit()
+                .putBoolean(KEY_PHOTO_SYNC, snap.photoSync)
+                .putBoolean(KEY_STORAGE_SYNC, snap.storageSync)
+                .putBoolean(KEY_RESUME_SYNC, snap.resumeSync)
+                .putBoolean(KEY_HD_MOUNT, snap.hdMount)
+                .putBoolean(KEY_CLOCK_NTP, snap.clockNtp)
+                .putBoolean(KEY_BOOT_START, snap.bootStart)
+                .putBoolean(KEY_WIFI_CONNECT, snap.wifiConnect)
+                .putBoolean(KEY_SINGULARITY_START, snap.singularityStart)
+                .putBoolean(KEY_WATCHDOG, snap.watchdog)
+                .putBoolean(KEY_FTP_LOCAL, snap.ftpLocal)
+                .putBoolean(KEY_KEEP_ALIVE, snap.keepAlive)
+                .putBoolean(KEY_SUN_TOO_HIGH, snap.sunTooHigh)
+                .commit();
+    }
+
+    boolean photoSync() { return prefs.getBoolean(KEY_PHOTO_SYNC, true); }
+    boolean storageSync() { return prefs.getBoolean(KEY_STORAGE_SYNC, true); }
+    boolean resumeSync() { return prefs.getBoolean(KEY_RESUME_SYNC, true); }
+    boolean hdMount() { return prefs.getBoolean(KEY_HD_MOUNT, true); }
+    boolean clockNtp() { return prefs.getBoolean(KEY_CLOCK_NTP, true); }
+    boolean bootStart() { return prefs.getBoolean(KEY_BOOT_START, true); }
+    boolean wifiConnect() { return prefs.getBoolean(KEY_WIFI_CONNECT, true); }
+    boolean singularityStart() { return prefs.getBoolean(KEY_SINGULARITY_START, true); }
+    boolean watchdog() { return prefs.getBoolean(KEY_WATCHDOG, true); }
+    boolean ftpLocal() { return prefs.getBoolean(KEY_FTP_LOCAL, true); }
+    boolean keepAlive() { return prefs.getBoolean(KEY_KEEP_ALIVE, true); }
+    boolean sunTooHigh() { return prefs.getBoolean(KEY_SUN_TOO_HIGH, true); }
+
+    int sunTooHighDay() { return prefs.getInt(KEY_SUN_TOO_HIGH_DAY, -1); }
+    long sunTooHighAt() { return prefs.getLong(KEY_SUN_TOO_HIGH_AT, 0); }
+    String sunTooHighResult() { return prefs.getString(KEY_SUN_TOO_HIGH_RESULT, ""); }
+
+    void recordSunTooHigh(int dayKey, String result) {
+        prefs.edit()
+                .putInt(KEY_SUN_TOO_HIGH_DAY, dayKey)
+                .putLong(KEY_SUN_TOO_HIGH_AT, System.currentTimeMillis())
+                .putString(KEY_SUN_TOO_HIGH_RESULT, result == null ? "" : result)
+                .commit();
+    }
+}
