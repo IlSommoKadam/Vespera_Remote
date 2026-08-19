@@ -249,6 +249,7 @@
     <string name="photo_btn_eject">Desconectar HD</string>
     <string name="photo_hd_safe_to_remove">Puedes extraer el HD de forma segura</string>
     <string name="photo_btn_sync_now">Copiar fotos ahora</string>
+    <string name="photo_btn_pause">Pausar</string>
     <string name="photo_btn_continue">Continuar</string>
     <string name="photo_hd_idle">Ningún disco seleccionado. Actualiza la lista, elige el HD y pulsa Montar.</string>
     <string name="photo_hd_occupied">Ocupado: %1$s</string>
@@ -293,6 +294,7 @@
     <string name="photo_sync_popup_close">Cerrar + pausa</string>
     <string name="photo_sync_phase_paused">En pausa</string>
     <string name="photo_sync_paused">Sync en pausa. Pulsa Continuar en Helper para reanudar transferencia, verificación y borrado.</string>
+    <string name="photo_sync_paused_until_next">En pausa hasta las %1$s (próximo horario). Continuar para reanudar antes.</string>
     <string name="photo_sync_phase_list">Listando archivos en el Vespera…</string>
     <string name="photo_sync_phase_download">Transferencia</string>
     <string name="photo_sync_phase_verify">Verificación de tamaño</string>

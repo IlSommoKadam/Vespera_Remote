@@ -249,6 +249,7 @@
     <string name="photo_btn_eject">Scollega HD</string>
     <string name="photo_hd_safe_to_remove">Puoi rimuovere HD in sicurezza</string>
     <string name="photo_btn_sync_now">Copia foto ora</string>
+    <string name="photo_btn_pause">Metti in pausa</string>
     <string name="photo_btn_continue">Continua</string>
     <string name="photo_hd_idle">Nessun disco selezionato. Aggiorna l\'elenco e scegli l\'HD, poi Monta.</string>
     <string name="photo_hd_occupied">Occupato: %1$s</string>
@@ -293,6 +294,7 @@
     <string name="photo_sync_popup_close">Chiudi + pausa</string>
     <string name="photo_sync_phase_paused">In pausa</string>
     <string name="photo_sync_paused">Sync in pausa. Premi Continua in Helper per riprendere trasferimento, verifica e cancellazione.</string>
+    <string name="photo_sync_paused_until_next">In pausa fino alle %1$s (prossimo orario). Continua per riprendere prima.</string>
     <string name="photo_sync_phase_list">Elenco file sul Vespera…</string>
     <string name="photo_sync_phase_download">Trasferimento</string>
     <string name="photo_sync_phase_verify">Verifica dimensione</string>

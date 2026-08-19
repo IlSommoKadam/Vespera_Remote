@@ -61,6 +61,7 @@ final class PhotoPanel {
     private final Button applyInterval;
     private final TextView syncStatus;
     private final Button syncNow;
+    private final Button pauseSync;
     private final Button continueSync;
     private final Button overlayPermission;
     private final TextView overlayHint;
@@ -322,6 +323,8 @@ final class PhotoPanel {
             refreshCopyButtons(true);
             PhotoSyncService.syncNow(activity);
         });
+        pauseSync = action(activity.getString(R.string.photo_btn_pause), COLOR_DANGER);
+        pauseSync.setOnClickListener(v -> PhotoSyncService.pauseUntilSchedule(activity));
         continueSync = action(activity.getString(R.string.photo_btn_continue), COLOR_DETECTED);
         continueSync.setOnClickListener(v -> {
             refreshCopyButtons(true);
@@ -351,6 +354,7 @@ final class PhotoPanel {
         layout.addView(syncBox);
         layout.addView(syncStatus);
         layout.addView(syncNow);
+        layout.addView(pauseSync);
         layout.addView(continueSync);
         layout.addView(overlayPermission);
         layout.addView(overlayHint);
@@ -362,6 +366,7 @@ final class PhotoPanel {
         refreshMountButtons();
         refreshOverlayRow();
         refreshUserFolderHint();
+        refreshCopyButtons(false);
     }
 
     void refreshUserFolderHint() {
@@ -472,12 +477,15 @@ final class PhotoPanel {
         }
     }
 
-    /** Copia foto ora / Continua stay inert while a transfer is already running. */
+    /** Copia foto ora / Continua inert while transferring; Metti in pausa only then. */
     private void refreshCopyButtons(boolean syncing) {
-        boolean unfinished = syncStore.paused() || syncStore.inProgress();
+        boolean unfinished = syncStore.paused() || syncStore.pauseUntilSchedule()
+                || syncStore.inProgress();
         boolean enableNow = !syncing;
+        boolean enablePause = syncing;
         boolean enableContinue = unfinished && !syncing;
         UiStyle.applyRaised(syncNow, enableNow ? COLOR_CONNECTED : COLOR_OFFLINE, enableNow);
+        UiStyle.applyRaised(pauseSync, enablePause ? COLOR_DANGER : COLOR_OFFLINE, enablePause);
         continueSync.setVisibility((unfinished || syncing) ? View.VISIBLE : View.GONE);
         UiStyle.applyRaised(continueSync, enableContinue ? COLOR_DETECTED : COLOR_OFFLINE, enableContinue);
     }

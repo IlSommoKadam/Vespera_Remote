@@ -50,6 +50,8 @@ public final class PhotoSyncService extends Service {
     public static final String ACTION_BOOTSTRAP = "com.vaonis.vesperahelper.PHOTO_BOOTSTRAP";
     public static final String ACTION_RESUME = "com.vaonis.vesperahelper.PHOTO_RESUME";
     public static final String ACTION_PAUSE = "com.vaonis.vesperahelper.PHOTO_PAUSE";
+    public static final String ACTION_PAUSE_UNTIL_SCHEDULE =
+            "com.vaonis.vesperahelper.PHOTO_PAUSE_UNTIL_SCHEDULE";
     public static final String ACTION_HIDE_WINDOW = "com.vaonis.vesperahelper.PHOTO_HIDE_WINDOW";
     public static final String ACTION_SHOW_WINDOW = "com.vaonis.vesperahelper.PHOTO_SHOW_WINDOW";
     public static final String ACTION_SYNC_CLOCK = "com.vaonis.vesperahelper.PHOTO_SYNC_CLOCK";
@@ -196,6 +198,12 @@ public final class PhotoSyncService extends Service {
                 .setAction(ACTION_PAUSE));
     }
 
+    /** Stop the current transfer; the next scheduled slot resumes it. */
+    public static void pauseUntilSchedule(Context context) {
+        context.startForegroundService(new Intent(context, PhotoSyncService.class)
+                .setAction(ACTION_PAUSE_UNTIL_SCHEDULE));
+    }
+
     public static void hideWindow(Context context) {
         context.startForegroundService(new Intent(context, PhotoSyncService.class)
                 .setAction(ACTION_HIDE_WINDOW));
@@ -291,13 +299,19 @@ public final class PhotoSyncService extends Service {
             worker.execute(() -> ejectLocked(ejectSpec));
         } else if (ACTION_SYNC_NOW.equals(action)) {
             pauseRequested.set(false);
-            if (syncStore != null) syncStore.setPaused(false);
+            if (syncStore != null) {
+                syncStore.setPaused(false);
+                syncStore.setPauseUntilSchedule(false);
+            }
             syncExecutor.execute(() -> maybeAutoSync(true));
         } else if (ACTION_SYNC_STORAGE.equals(action)) {
             syncExecutor.execute(this::maybeSyncForFullStorage);
         } else if (ACTION_RESUME.equals(action)) {
             pauseRequested.set(false);
-            if (syncStore != null) syncStore.setPaused(false);
+            if (syncStore != null) {
+                syncStore.setPaused(false);
+                syncStore.setPauseUntilSchedule(false);
+            }
             if (hud != null) hud.show();
             syncExecutor.execute(() -> maybeAutoSync(true));
         } else if (ACTION_PAUSE.equals(action)) {
@@ -308,6 +322,13 @@ public final class PhotoSyncService extends Service {
             }
             if (hud != null) hud.hideByUser();
             mainHandler.removeCallbacks(autoSyncAlarm);
+            publish();
+        } else if (ACTION_PAUSE_UNTIL_SCHEDULE.equals(action)) {
+            pauseRequested.set(true);
+            if (syncStore != null) {
+                syncStore.markInterrupted(this);
+                syncStore.setPauseUntilSchedule(true);
+            }
             publish();
         } else if (ACTION_HIDE_WINDOW.equals(action)) {
             if (hud != null) hud.hideByUser();
@@ -618,6 +639,12 @@ public final class PhotoSyncService extends Service {
             syncStatus = localized.getString(R.string.photo_sync_paused);
             return;
         }
+        if (syncStore != null && syncStore.pauseUntilSchedule()) {
+            long nextAt = syncStore.nextAutoAt(System.currentTimeMillis());
+            syncStatus = localized.getString(R.string.photo_sync_paused_until_next,
+                    formatClock(nextAt));
+            return;
+        }
         if (!mounted) {
             syncStatus = localized.getString(R.string.photos_sync_need_hd);
             return;
@@ -738,7 +765,7 @@ public final class PhotoSyncService extends Service {
         synchronized (syncLock) {
             if (syncing) return;
         }
-        if (syncStore != null && syncStore.paused()) return;
+        if (syncStore != null && (syncStore.paused() || syncStore.pauseUntilSchedule())) return;
         long now = System.currentTimeMillis();
         if (lastStorageSyncAt > 0 && now - lastStorageSyncAt < STORAGE_SYNC_COOLDOWN_MS) {
             return;
@@ -759,6 +786,16 @@ public final class PhotoSyncService extends Service {
             }
         }
         try {
+            if (syncStore != null && syncStore.pauseUntilSchedule() && !force) {
+                long now = System.currentTimeMillis();
+                if (!syncStore.isAutoDue(now)) {
+                    refreshSyncHint();
+                    publish();
+                    return;
+                }
+                syncStore.setPauseUntilSchedule(false);
+                resume = shouldResume() || hasSuspendedWork();
+            }
             if (syncStore != null && syncStore.paused() && !force) {
                 refreshSyncHint();
                 return;
@@ -844,7 +881,12 @@ public final class PhotoSyncService extends Service {
                         || result.deleted > 0 || PhotoSyncEngine.hasIncomplete(root);
                 if (paused) {
                     syncStore.markInterrupted(this);
-                    syncStore.setPaused(true);
+                    if (syncStore.pauseUntilSchedule()) {
+                        syncStore.setPaused(false);
+                        syncStore.recordAttempt();
+                    } else {
+                        syncStore.setPaused(true);
+                    }
                 } else if (complete) {
                     syncStore.clearInProgress(this);
                 } else if (!startedWork) {
@@ -853,7 +895,12 @@ public final class PhotoSyncService extends Service {
                     syncStore.markInterrupted(this);
                 }
                 if (paused) {
-                    message = localized.getString(R.string.photo_sync_paused);
+                    if (syncStore.pauseUntilSchedule()) {
+                        message = localized.getString(R.string.photo_sync_paused_until_next,
+                                formatClock(syncStore.nextAutoAt(System.currentTimeMillis())));
+                    } else {
+                        message = localized.getString(R.string.photo_sync_paused);
+                    }
                 } else if (result.error != null) {
                     syncStore.recordFailure(result.error);
                     message = lastErrorLabel(localized, result.error);
@@ -955,6 +1002,10 @@ public final class PhotoSyncService extends Service {
      * was left paused, interrupted, or with leftover {@code .part} files.
      */
     private void resumeSuspendedIfNeeded() {
+        if (syncStore != null && syncStore.pauseUntilSchedule()) {
+            maybeAutoSync(false);
+            return;
+        }
         if (!hasSuspendedWork()) {
             maybeAutoSync(false);
             return;

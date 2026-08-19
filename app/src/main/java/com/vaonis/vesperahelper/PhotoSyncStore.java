@@ -34,6 +34,7 @@ final class PhotoSyncStore {
     private static final String KEY_PHOTOS_PATH = "photos_path";
     private static final String KEY_IN_PROGRESS = "in_progress";
     private static final String KEY_PAUSED = "paused";
+    private static final String KEY_PAUSE_UNTIL_SCHEDULE = "pause_until_schedule";
     private static final String KEY_HAS_SITE = "has_site";
     private static final String KEY_SITE_LAT = "site_lat";
     private static final String KEY_SITE_LON = "site_lon";
@@ -316,9 +317,11 @@ final class PhotoSyncStore {
     String photosPath() { return prefs.getString(KEY_PHOTOS_PATH, ""); }
     boolean inProgress() { return prefs.getBoolean(KEY_IN_PROGRESS, false); }
     boolean paused() { return prefs.getBoolean(KEY_PAUSED, false); }
+    boolean pauseUntilSchedule() { return prefs.getBoolean(KEY_PAUSE_UNTIL_SCHEDULE, false); }
 
     boolean shouldResume(Context context) {
         if (paused()) return false;
+        if (pauseUntilSchedule()) return false;
         return hasSuspendedWork(context);
     }
 
@@ -341,11 +344,22 @@ final class PhotoSyncStore {
     }
 
     void setPaused(boolean paused) {
-        prefs.edit().putBoolean(KEY_PAUSED, paused).commit();
+        SharedPreferences.Editor editor = prefs.edit().putBoolean(KEY_PAUSED, paused);
+        if (paused) editor.putBoolean(KEY_PAUSE_UNTIL_SCHEDULE, false);
+        editor.commit();
+    }
+
+    void setPauseUntilSchedule(boolean defer) {
+        SharedPreferences.Editor editor = prefs.edit().putBoolean(KEY_PAUSE_UNTIL_SCHEDULE, defer);
+        if (defer) editor.putBoolean(KEY_PAUSED, false);
+        editor.commit();
     }
 
     void markInProgress(Context context) {
-        prefs.edit().putBoolean(KEY_IN_PROGRESS, true).putBoolean(KEY_PAUSED, false).commit();
+        prefs.edit().putBoolean(KEY_IN_PROGRESS, true)
+                .putBoolean(KEY_PAUSED, false)
+                .putBoolean(KEY_PAUSE_UNTIL_SCHEDULE, false)
+                .commit();
         writeMarker(context, true);
     }
 
@@ -356,7 +370,10 @@ final class PhotoSyncStore {
     }
 
     void clearInProgress(Context context) {
-        prefs.edit().putBoolean(KEY_IN_PROGRESS, false).putBoolean(KEY_PAUSED, false).commit();
+        prefs.edit().putBoolean(KEY_IN_PROGRESS, false)
+                .putBoolean(KEY_PAUSED, false)
+                .putBoolean(KEY_PAUSE_UNTIL_SCHEDULE, false)
+                .commit();
         writeMarker(context, false);
     }
 

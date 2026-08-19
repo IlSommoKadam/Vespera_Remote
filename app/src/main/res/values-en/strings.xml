@@ -249,6 +249,7 @@
     <string name="photo_btn_eject">Disconnect HD</string>
     <string name="photo_hd_safe_to_remove">You can safely remove the HD</string>
     <string name="photo_btn_sync_now">Copy photos now</string>
+    <string name="photo_btn_pause">Pause</string>
     <string name="photo_btn_continue">Continue</string>
     <string name="photo_hd_idle">No disk selected. Refresh the list, pick the HD, then Mount.</string>
     <string name="photo_hd_occupied">Occupied: %1$s</string>
@@ -293,6 +294,7 @@
     <string name="photo_sync_popup_close">Close + pause</string>
     <string name="photo_sync_phase_paused">Paused</string>
     <string name="photo_sync_paused">Sync paused. Tap Continue in Helper to resume transfer, verify and delete.</string>
+    <string name="photo_sync_paused_until_next">Paused until %1$s (next schedule). Tap Continue to resume sooner.</string>
     <string name="photo_sync_phase_list">Listing files on the Vespera…</string>
     <string name="photo_sync_phase_download">Transfer</string>
     <string name="photo_sync_phase_verify">Size verification</string>
