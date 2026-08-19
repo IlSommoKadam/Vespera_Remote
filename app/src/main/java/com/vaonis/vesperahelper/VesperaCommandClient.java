@@ -3,6 +3,8 @@ package com.vaonis.vesperahelper;
 import android.net.Network;
 import android.util.Log;
 
+import org.json.JSONObject;
+
 /**
  * Sends Vespera REST commands with Ed25519 challenge-response auth.
  */
@@ -39,6 +41,11 @@ final class VesperaCommandClient {
     private VesperaCommandClient() {}
 
     static Result send(String host, int apiPort, Network network, Command command) {
+        return send(host, apiPort, network, command, null);
+    }
+
+    static Result send(String host, int apiPort, Network network, Command command,
+            VesperaLocationClient.Site initSite) {
         if (host == null || host.isEmpty()) host = "10.0.0.1";
         int port = apiPort > 0 ? apiPort : 8082;
         if (port == 8083) port = 8082;
@@ -54,9 +61,14 @@ final class VesperaCommandClient {
         String body = "{}";
         boolean haveTarget = false;
         if (command == Command.RESUME) {
-            body = VesperaLastTarget.startObservationBody();
-            haveTarget = !body.isEmpty();
+            body = VesperaLastTarget.startObservationBody(snap);
+            haveTarget = VesperaLastTarget.hasTarget() && !body.isEmpty();
             if (!haveTarget) body = "{\"resume\":true}";
+        } else if (command == Command.INIT) {
+            body = autoInitBody(initSite);
+            if (body.isEmpty()) {
+                return new Result(false, -1, "no_site");
+            }
         }
         String authorization = VesperaApiAuth.authorizationHeader(snap);
         if (authorization.isEmpty()) {
@@ -71,7 +83,7 @@ final class VesperaCommandClient {
                     "/v1/device/shutdown"
             };
         } else if (command == Command.RESUME) {
-            paths = new String[] { "/v1/general/resumeObservation", command.path };
+            paths = new String[] { command.path, "/v1/general/resumeObservation" };
         } else {
             paths = new String[] { command.path };
         }
@@ -84,18 +96,21 @@ final class VesperaCommandClient {
                 if (shutdown && response.code == 0) {
                     return new Result(true, 0, "shutdown_started");
                 }
-                boolean ok = response.code >= 200 && response.code < 300;
+                boolean ok = response.code >= 200 && response.code < 300
+                        && !isFirmwareFailure(response.body);
                 if (!ok && response.code == 401) {
                     return new Result(false, response.code, "auth_required");
                 }
                 String msg = response.body.isEmpty()
-                        ? ("HTTP " + response.code) : truncate(response.body, 200);
+                        ? ("HTTP " + response.code) : truncate(response.body, 400);
                 last = new Result(ok, response.code, msg);
                 if (ok) {
                     if (shutdown) return new Result(true, response.code, "shutdown_started");
                     return last;
                 }
-                if (response.code != 404 && response.code != 405) return last;
+                boolean tryNext = response.code == 404 || response.code == 405
+                        || (command == Command.RESUME && isIncorrectParams(response.body));
+                if (!tryNext) return last;
             }
             if (command == Command.RESUME && !haveTarget) {
                 return new Result(false, last.httpCode,
@@ -108,6 +123,43 @@ final class VesperaCommandClient {
                 return new Result(true, 0, "shutdown_started");
             }
             return new Result(false, -1, failure.getMessage());
+        }
+    }
+
+    /**
+     * Firmware {@code startAutoInit} requires {@code time} (Date.now ms),
+     * {@code latitude} and {@code longitude}. Empty {@code {}} is rejected with
+     * CHECKPARAMS.INCORRECT_PARAMS.
+     */
+    private static String autoInitBody(VesperaLocationClient.Site site) {
+        if (site == null) return "";
+        try {
+            JSONObject body = new JSONObject();
+            body.put("time", System.currentTimeMillis());
+            body.put("latitude", site.lat);
+            body.put("longitude", site.lon);
+            return body.toString();
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private static boolean isIncorrectParams(String responseBody) {
+        if (responseBody == null) return false;
+        String text = responseBody.toUpperCase(java.util.Locale.US);
+        return text.contains("INCORRECT_PARAMS") || text.contains("CHECKPARAMS");
+    }
+
+    private static boolean isFirmwareFailure(String responseBody) {
+        if (responseBody == null || responseBody.isEmpty()) return false;
+        String trim = responseBody.trim();
+        if (trim.charAt(0) != '{') return false;
+        try {
+            JSONObject json = new JSONObject(trim);
+            if (json.has("success") && !json.optBoolean("success", true)) return true;
+            return false;
+        } catch (Exception ignored) {
+            return isIncorrectParams(responseBody);
         }
     }
 

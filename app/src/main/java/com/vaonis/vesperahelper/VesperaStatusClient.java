@@ -160,7 +160,16 @@ final class VesperaStatusClient {
                 }
             }
         }
-        VesperaLastTarget.remember(targetObj, lastObservation != null ? lastObservation : operation);
+        if (gain <= 0 || exposureUs <= 0) {
+            JSONObject stored = lastStoredCapture(body);
+            if (stored == null) stored = lastStoredCapture(root);
+            if (stored != null) {
+                if (exposureUs <= 0) exposureUs = stored.optLong("exposureMicroSec", 0);
+                if (gain <= 0) gain = stored.optInt("gain", -1);
+            }
+        }
+        VesperaLastTarget.remember(targetObj,
+                lastObservation != null ? lastObservation : operation, body);
         String currentOpType = operation == null ? "" : text(operation, "type");
         if (!currentOpType.isEmpty()) operationType = currentOpType;
         int batteryPercent = -1;
@@ -173,10 +182,11 @@ final class VesperaStatusClient {
             batteryPercent = battery.optInt("chargeLevel", battery.optInt("level", -1));
             batteryStatus = firstNonEmpty(
                     text(battery, "chargeStatus"), text(battery, "status"));
-            if (batteryStatus.isEmpty()
-                    && (battery.has("plugged") || battery.has("isPlugged"))) {
+            if (battery.has("plugged") || battery.has("isPlugged")) {
                 boolean plugged = battery.optBoolean("plugged", battery.optBoolean("isPlugged", false));
-                batteryStatus = plugged ? "CONNECTED" : "DISCONNECTED";
+                if (batteryStatus.isEmpty() || (!plugged && !VesperaStatusSnapshot.isOffMainsPower(batteryStatus))) {
+                    batteryStatus = plugged ? "CONNECTED" : "DISCONNECTED";
+                }
             }
         }
         String tracking = parseTracking(body, root, operation, observationStatus);
@@ -266,6 +276,20 @@ final class VesperaStatusClient {
             }
         }
         return fallback;
+    }
+
+    private static JSONObject lastStoredCapture(JSONObject payload) {
+        if (payload == null) return null;
+        JSONObject store = payload.optJSONObject("captureStore");
+        if (store == null) {
+            JSONObject nested = payload.optJSONObject("result");
+            if (nested == null) nested = payload.optJSONObject("data");
+            store = nested == null ? null : nested.optJSONObject("captureStore");
+        }
+        if (store == null) return null;
+        JSONArray captures = store.optJSONArray("storedCaptures");
+        if (captures == null || captures.length() == 0) return null;
+        return captures.optJSONObject(captures.length() - 1);
     }
 
     private static boolean isResumable(JSONObject op) {

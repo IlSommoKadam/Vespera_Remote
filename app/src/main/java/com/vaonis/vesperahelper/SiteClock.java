@@ -2,6 +2,7 @@ package com.vaonis.vesperahelper;
 
 import android.app.AlarmManager;
 import android.content.Context;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.text.SimpleDateFormat;
@@ -16,6 +17,8 @@ import java.util.TimeZone;
 final class SiteClock {
     private static final String TAG = "VesperaClock";
     static final long INTERVAL_MS = 18 * 60 * 60 * 1000L;
+    static final long RETRY_MS = 2 * 60 * 1000L;
+    static final long APPLY_SKEW_MS = 90 * 1000L;
 
     static final class Result {
         final boolean ntpOk;
@@ -49,24 +52,47 @@ final class SiteClock {
         boolean ntpOk = false;
         boolean ntpAttempted = false;
         long ntpMs = now;
+        boolean skewed = store.clockLooksWrong(now);
+        long minGap = (skewed || !store.lastNtpOk()) ? RETRY_MS : INTERVAL_MS;
         boolean due = forceNtp
-                || (!store.clockSyncedRecently(INTERVAL_MS) && store.clockSyncDue(now, INTERVAL_MS));
+                || (!store.clockSyncedRecently(minGap)
+                && (skewed || store.clockSyncDue(now, INTERVAL_MS)));
         if (due) {
             ntpAttempted = true;
             try {
                 ntpMs = NtpClient.unixTimeMs();
-                ntpOk = true;
                 applySystemClock(context, zoneId, ntpMs);
-                store.recordClockSync(ntpMs, true);
-                SystemActivityLog.dropFuture(context);
-                Log.i(TAG, "ntp ok tz=" + zoneId + " ms=" + ntpMs);
+                ntpOk = clockMatches(ntpMs) || waitForClock(ntpMs, 2_000);
+                store.recordClockSync(ntpOk ? ntpMs : System.currentTimeMillis(), ntpOk);
+                if (ntpOk) SystemActivityLog.dropFuture(context);
+                Log.i(TAG, (ntpOk ? "ntp ok" : "ntp set but wall clock still wrong")
+                        + " tz=" + zoneId + " ntp=" + ntpMs
+                        + " wall=" + System.currentTimeMillis());
             } catch (Exception failure) {
                 Log.w(TAG, "ntp failed: " + failure.getMessage());
-                store.recordClockSync(now, false);
+                store.recordClockSync(System.currentTimeMillis(), false);
             }
         }
         boolean hoursChanged = store.applySunHours(ntpOk ? ntpMs : System.currentTimeMillis(), ntpOk);
         return new Result(ntpOk, hoursChanged, ntpAttempted, zoneId, ntpMs);
+    }
+
+    private static boolean clockMatches(long ntpMs) {
+        return Math.abs(System.currentTimeMillis() - ntpMs) < APPLY_SKEW_MS;
+    }
+
+    private static boolean waitForClock(long ntpMs, long timeoutMs) {
+        long deadline = SystemClock.elapsedRealtime() + timeoutMs;
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (clockMatches(ntpMs)) return true;
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return clockMatches(ntpMs);
+            }
+        }
+        return clockMatches(ntpMs);
     }
 
     private static void applySystemClock(Context context, String zoneId, long ntpMs) {

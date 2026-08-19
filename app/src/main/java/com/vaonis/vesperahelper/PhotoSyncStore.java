@@ -140,13 +140,24 @@ final class PhotoSyncStore {
         if (last <= 0) return true;
         long delta = nowMs - last;
         if (delta >= intervalMs) return true;
-        if (delta < 0) return false;
+        if (delta < 0) return true;
         Calendar now = Calendar.getInstance(zone());
         now.setTimeInMillis(nowMs);
         Calendar then = Calendar.getInstance(zone());
         then.setTimeInMillis(last);
         return now.get(Calendar.DAY_OF_YEAR) != then.get(Calendar.DAY_OF_YEAR)
                 || now.get(Calendar.YEAR) != then.get(Calendar.YEAR);
+    }
+
+    /**
+     * True when the wall clock is behind stored NTP/sync stamps (typical after a
+     * Pi reboot with no RTC: clock falls back to the Android build date).
+     */
+    boolean clockLooksWrong(long nowMs) {
+        long skew = 120_000L;
+        if (lastNtpAt() > nowMs + skew) return true;
+        long last = Math.max(lastAt(), lastAttemptAt());
+        return last > nowMs + skew;
     }
 
     /**
@@ -363,6 +374,7 @@ final class PhotoSyncStore {
     long nextAutoAt(long nowMs) {
         long last = Math.max(lastAt(), lastAttemptAt());
         if (last <= 0) return nowMs;
+        if (last > nowMs + 120_000L) return nowMs;
         return nextSlotAfter(last);
     }
 

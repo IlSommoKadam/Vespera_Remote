@@ -317,17 +317,11 @@ final class PhotoPanel {
 
         syncStatus = body(activity.getString(R.string.photo_sync_idle));
         syncNow = action(activity.getString(R.string.photo_btn_sync_now), COLOR_CONNECTED);
-        syncNow.setOnClickListener(v -> {
-            refreshCopyButtons(true);
-            PhotoSyncService.syncNow(activity);
-        });
+        syncNow.setOnClickListener(v -> startCopyNow());
         pauseSync = action(activity.getString(R.string.photo_btn_pause), COLOR_DANGER);
         pauseSync.setOnClickListener(v -> PhotoSyncService.pauseUntilSchedule(activity));
         continueSync = action(activity.getString(R.string.photo_btn_continue), COLOR_DETECTED);
-        continueSync.setOnClickListener(v -> {
-            refreshCopyButtons(true);
-            PhotoSyncService.resumeSync(activity);
-        });
+        continueSync.setOnClickListener(v -> resumeCopyNow());
         continueSync.setVisibility(View.GONE);
         overlayPermission = action(activity.getString(R.string.photo_sync_overlay_btn), COLOR_CONNECTING);
         overlayPermission.setOnClickListener(v -> requestOverlayPermission());
@@ -473,6 +467,40 @@ final class PhotoPanel {
         if (progress.fileTotal > 0 && progress.fileName != null && !progress.fileName.isEmpty()) {
             syncStatus.setText(activity.getString(R.string.photos_sync_file,
                     progress.fileIndex, progress.fileTotal, progress.fileName));
+        }
+    }
+
+    private void startCopyNow() {
+        refreshCopyButtons(true);
+        syncStatus.setText(R.string.photo_sync_starting);
+        SyncProgress starting = new SyncProgress();
+        starting.active = true;
+        starting.phase = SyncProgress.PHASE_LIST;
+        starting.detail = activity.getString(R.string.photo_sync_starting);
+        SyncProgressHud.latest = starting;
+        openCopyWindow();
+        PhotoSyncService.syncNow(activity);
+    }
+
+    private void resumeCopyNow() {
+        refreshCopyButtons(true);
+        syncStatus.setText(R.string.photo_sync_resume);
+        SyncProgress starting = new SyncProgress();
+        starting.active = true;
+        starting.phase = SyncProgress.PHASE_LIST;
+        starting.detail = activity.getString(R.string.photo_sync_resume);
+        SyncProgressHud.latest = starting;
+        openCopyWindow();
+        PhotoSyncService.resumeSync(activity);
+    }
+
+    private void openCopyWindow() {
+        try {
+            activity.startActivity(new Intent(activity, SyncProgressActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                            | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                            | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+        } catch (Exception ignored) {
         }
     }
 
@@ -800,6 +828,7 @@ final class PhotoPanel {
         final int y = scroll.getScrollY();
         dialog.setOnDismissListener(d -> scroll.restoreTo(x, y));
         dialog.show();
+        UiStyle.styleAlertButtons(dialog);
     }
 
     private void dismissDiskWarning(boolean resetIgnore) {

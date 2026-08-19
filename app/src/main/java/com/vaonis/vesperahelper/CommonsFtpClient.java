@@ -213,6 +213,7 @@ final class CommonsFtpClient implements Closeable {
         FTPClientConfig config = new FTPClientConfig(FTPClientConfig.SYST_UNIX);
         config.setServerLanguageCode("en");
         ftp.configure(config);
+        ftp.setUnparseableEntries(true);
         ftp.setConnectTimeout(8_000);
         ftp.setDefaultTimeout(20_000);
         ftp.setDataTimeout(TRANSFER_DATA_TIMEOUT_MS);
@@ -244,9 +245,23 @@ final class CommonsFtpClient implements Closeable {
         for (FTPFile file : listed) {
             if (file == null) continue;
             String name = file.getName();
-            if (name == null || ".".equals(name) || "..".equals(name)) continue;
+            if (name == null || name.isEmpty()) {
+                String raw = file.getRawListing();
+                if (raw == null || raw.trim().isEmpty()) continue;
+                List<SimpleFtpClient.Entry> parsed = SimpleFtpClient.parseList(dir, raw);
+                if (parsed.isEmpty()) continue;
+                SimpleFtpClient.Entry one = parsed.get(0);
+                name = one.name;
+                if (one.directory) {
+                    subdirs.add(one.path);
+                    continue;
+                }
+                files.add(new Entry(one.path, one.name, false, one.size));
+                continue;
+            }
+            if (".".equals(name) || "..".equals(name)) continue;
             String path = prefix + name;
-            if (file.isDirectory()) {
+            if (file.isDirectory() || shouldTreatAsDirectory(file, name, path)) {
                 subdirs.add(path);
             } else {
                 files.add(new Entry(path, name, false, file.getSize()));
@@ -256,6 +271,33 @@ final class CommonsFtpClient implements Closeable {
         if (listener != null) listener.onDir(dir, files.size());
         for (String child : subdirs) {
             walk(child, files, listener);
+        }
+    }
+
+    /**
+     * Pure-FTPd LIST is UNIX, but Commons Net sometimes marks observation
+     * folders as unknown/file. Probe CWD so those folders are still walked.
+     */
+    private boolean shouldTreatAsDirectory(FTPFile file, String name, String path) {
+        if (file != null && file.isDirectory()) return true;
+        if (PhotoSyncEngine.isPhoto(name)) return false;
+        if (file != null && file.isFile() && file.getSize() > 0 && name.contains(".")) {
+            return false;
+        }
+        return probeDirectory(path);
+    }
+
+    private boolean probeDirectory(String path) {
+        if (ftp == null) return false;
+        try {
+            String here = ftp.printWorkingDirectory();
+            if (!ftp.changeWorkingDirectory(path)) return false;
+            if (here != null && !here.isEmpty()) {
+                ftp.changeWorkingDirectory(here);
+            }
+            return true;
+        } catch (IOException ignored) {
+            return false;
         }
     }
 

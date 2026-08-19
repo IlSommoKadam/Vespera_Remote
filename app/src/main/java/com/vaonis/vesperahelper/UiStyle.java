@@ -1,11 +1,13 @@
 package com.vaonis.vesperahelper;
 
+import android.app.AlertDialog;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.InsetDrawable;
 import android.graphics.drawable.LayerDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.TextView;
 
 /** Raised 3D chrome for real buttons vs recessed chips for status text. */
@@ -87,6 +89,52 @@ final class UiStyle {
         view.setAlpha(1f);
         view.setMinHeight(Math.round(44 * density));
         view.setMinimumHeight(Math.round(44 * density));
+    }
+
+    /** Call after {@link AlertDialog#show()} so dialog actions look like raised buttons. */
+    static void styleAlertButtons(AlertDialog dialog) {
+        if (dialog == null) return;
+        TextView positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+        TextView negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+        TextView neutral = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
+        float density = dialog.getContext().getResources().getDisplayMetrics().density;
+        styleAlertButton(negative, SLATE, density);
+        styleAlertButton(neutral, STEEL_BLUE, density);
+        styleAlertButton(positive, GREEN, density);
+        View parent = firstParent(positive, negative, neutral);
+        if (parent != null) {
+            int h = Math.round(10 * density);
+            int v = Math.round(8 * density);
+            parent.setPadding(h, v, h, v);
+        }
+    }
+
+    private static void styleAlertButton(TextView button, int color, float density) {
+        if (button == null || button.getVisibility() != View.VISIBLE) return;
+        applyRaised(button, color, true);
+        int minW = Math.round(96 * density);
+        int minH = Math.round(42 * density);
+        button.setMinWidth(minW);
+        button.setMinimumWidth(minW);
+        button.setMinHeight(minH);
+        button.setMinimumHeight(minH);
+        int gap = Math.round(8 * density);
+        if (button.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+            ViewGroup.MarginLayoutParams lp =
+                    (ViewGroup.MarginLayoutParams) button.getLayoutParams();
+            lp.leftMargin = Math.max(lp.leftMargin, gap);
+            lp.rightMargin = Math.max(lp.rightMargin, gap / 2);
+            button.setLayoutParams(lp);
+        }
+    }
+
+    private static View firstParent(View... views) {
+        for (View view : views) {
+            if (view != null && view.getParent() instanceof View) {
+                return (View) view.getParent();
+            }
+        }
+        return null;
     }
 
     static void applyRaised(TextView view, int color, boolean enabled) {

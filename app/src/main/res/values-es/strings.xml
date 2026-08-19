@@ -171,6 +171,7 @@
     <string name="telescope_command_auth_missing">Falta challenge o ID del telescopio en el estado: no se puede firmar el comando.</string>
     <string name="telescope_command_auth_missing_challenge">Falta el challenge en el estado: no se puede firmar el comando.</string>
     <string name="telescope_command_no_target">No hay objetivo para reanudar: inicia antes una observación en Singularity, o espera a que el estado muestre RA/Dec.</string>
+    <string name="telescope_command_no_site">Faltan las coordenadas del observatorio. En la pestaña Foto elige una ciudad (o lee las coordenadas del Vespera) y reintenta.</string>
     <string name="telescope_power_title">Red eléctrica</string>
     <string name="telescope_power_message">El telescopio no está conectado a la red eléctrica (funciona con batería). Acepta para continuar sin más avisos hasta que lo enchufes, o Ignora: se te preguntará de nuevo al abrir esta pestaña.</string>
     <string name="telescope_power_accept">Aceptar</string>
@@ -207,7 +208,8 @@
     <string name="telescope_confirm_park">¿Cerrar el brazo y aparcar el telescopio?</string>
     <string name="telescope_confirm_stop">¿Detener la observación en curso?</string>
     <string name="telescope_confirm_resume">¿Reanudar la observación con el último objetivo del estado?</string>
-    <string name="telescope_confirm_init">¿Inicializar el telescopio?</string>
+    <string name="telescope_confirm_init">¿Inicializar el telescopio? Se enviarán fecha/hora actuales y las coordenadas del observatorio (pestaña Foto).</string>
+    <string name="telescope_confirm_init_site">¿Inicializar el telescopio con el observatorio «%1$s» (%2$s)?</string>
     <string name="telescope_shutdown_title">Apagar telescopio</string>
     <string name="telescope_shutdown_message">¿Apagar el Vespera? El Wi‑Fi se cerrará y Helper perderá la conexión.</string>
     <string name="status_tab_title">Estado Vespera</string>
@@ -330,6 +332,7 @@
     <string name="photo_sync_phase_done">Completada</string>
     <string name="photo_sync_phase_error">Error</string>
     <string name="photo_sync_listing">Leyendo carpeta USER…</string>
+    <string name="photo_sync_starting">Iniciando copia de fotos…</string>
     <string name="photo_sync_listing_dir">Leyendo %1$s · %2$d archivos</string>
     <string name="photo_sync_stats">%1$s · %2$s · copiados %3$d, ya presentes %4$d, borrados %5$d</string>
     <string name="photo_sync_eta">Tiempo estimado: %1$s</string>

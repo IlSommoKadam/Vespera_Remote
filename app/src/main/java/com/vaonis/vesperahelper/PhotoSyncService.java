@@ -114,6 +114,8 @@ public final class PhotoSyncService extends Service {
     private String message = "";
     private int fileCount;
     private boolean syncing;
+    /** True after Copia ora / Continua until maybeAutoSync takes the lock. */
+    private volatile boolean pendingForceSync;
     private boolean userUnmounted;
     private long lastNotifyAt;
     private SyncProgress lastProgress;
@@ -155,14 +157,20 @@ public final class PhotoSyncService extends Service {
     private final Runnable sunTooHighAlarm = () -> worker.execute(this::maybeCheckSunTooHigh);
     private final Runnable tick = new Runnable() {
         @Override public void run() {
-            worker.execute(() -> {
-                refreshClockAndSun(false);
-                refreshMountStatus();
-                maybeAutoMount();
-                refreshTelescopeFtpLocked();
-                publish();
-            });
-            mainHandler.postDelayed(this, TICK_MS);
+        worker.execute(() -> {
+            refreshClockAndSun(false);
+            refreshMountStatus();
+            maybeAutoMount();
+            refreshTelescopeFtpLocked();
+            publish();
+            if (syncStore != null
+                    && SystemSettingsStore.from(PhotoSyncService.this).photoSync()
+                    && !syncStore.paused()
+                    && syncStore.isAutoDue(System.currentTimeMillis())) {
+                syncExecutor.execute(() -> maybeAutoSync(false, SystemActivityLog.KIND_PHOTO_SYNC));
+            }
+        });
+        mainHandler.postDelayed(this, TICK_MS);
         }
     };
 
@@ -344,6 +352,7 @@ public final class PhotoSyncService extends Service {
                 syncStore.setPaused(false);
                 syncStore.setPauseUntilSchedule(false);
             }
+            beginForcedSyncUi();
             syncExecutor.execute(() -> maybeAutoSync(true, null));
         } else if (ACTION_SYNC_STORAGE.equals(action)) {
             syncExecutor.execute(this::maybeSyncForFullStorage);
@@ -353,7 +362,7 @@ public final class PhotoSyncService extends Service {
                 syncStore.setPaused(false);
                 syncStore.setPauseUntilSchedule(false);
             }
-            if (hud != null) hud.show();
+            beginForcedSyncUi();
             syncExecutor.execute(() -> maybeAutoSync(true, null));
         } else if (ACTION_PAUSE.equals(action)) {
             pauseRequested.set(true);
@@ -768,7 +777,8 @@ public final class PhotoSyncService extends Service {
         mainHandler.postDelayed(autoSyncAlarm, delay);
         setRtcAlarm(fireAt);
         Log.i(TAG, "next auto-sync in " + (delay / 1000L) + "s at "
-                + formatClock(fireAt));
+                + formatClock(fireAt)
+                + (syncStore.clockLooksWrong(now) ? " (clock behind stored stamps)" : ""));
     }
 
     /**
@@ -1015,6 +1025,23 @@ public final class PhotoSyncService extends Service {
         maybeAutoSync(true, SystemActivityLog.KIND_STORAGE_SYNC);
     }
 
+    private void beginForcedSyncUi() {
+        pendingForceSync = true;
+        Context localized = AppLocale.wrap(this);
+        SyncProgress progress = new SyncProgress();
+        progress.active = true;
+        progress.phase = SyncProgress.PHASE_LIST;
+        progress.detail = localized.getString(R.string.photo_sync_starting);
+        lastProgress = progress;
+        syncStatus = progress.detail;
+        message = progress.detail;
+        if (hud != null) {
+            hud.show();
+            hud.bind(progress);
+        }
+        publish();
+    }
+
     private void maybeAutoSync(boolean force) {
         maybeAutoSync(force, null);
     }
@@ -1033,8 +1060,14 @@ public final class PhotoSyncService extends Service {
         }
         synchronized (syncLock) {
             if (syncing) {
-                if ((force || resume) && hud != null) hud.show();
-                return;
+                boolean reallyActive = lastProgress != null && lastProgress.active;
+                if (reallyActive) {
+                    if ((force || resume) && hud != null) hud.show();
+                    if (force) pendingForceSync = false;
+                    return;
+                }
+                Log.w(TAG, "stale syncing flag — restarting copy");
+                syncing = false;
             }
         }
         try {
@@ -1188,6 +1221,7 @@ public final class PhotoSyncService extends Service {
                 sendBroadcast(progressIntent());
             }
         } finally {
+            if (!syncing) pendingForceSync = false;
             if (syncStore != null && !syncStore.paused()) {
                 synchronized (syncLock) {
                     if (!syncing) scheduleNextAutoSync();
@@ -1325,7 +1359,12 @@ public final class PhotoSyncService extends Service {
 
     private Intent progressIntent() {
         return new Intent(ACTION_PROGRESS).setPackage(getPackageName())
-                .putExtra(EXTRA_SYNCING, syncing);
+                .putExtra(EXTRA_SYNCING, isCopyUiActive());
+    }
+
+    private boolean isCopyUiActive() {
+        if (syncing) return true;
+        return pendingForceSync && lastProgress != null && lastProgress.active;
     }
 
     private void onEngineProgress(SyncProgress progress) {
@@ -1613,7 +1652,7 @@ public final class PhotoSyncService extends Service {
                 .putExtra(EXTRA_EJECTED, ejected)
                 .putExtra(EXTRA_FTP_RUNNING, ftpServer.isRunning())
                 .putExtra(EXTRA_SELECTED, selectedSpec)
-                .putExtra(EXTRA_SYNCING, syncing)
+                .putExtra(EXTRA_SYNCING, isCopyUiActive())
                 .putExtra(EXTRA_PAUSED, syncStore != null && syncStore.paused());
         sendBroadcast(intent);
         getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification());

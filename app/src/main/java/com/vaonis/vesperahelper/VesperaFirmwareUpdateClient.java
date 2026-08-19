@@ -78,11 +78,14 @@ final class VesperaFirmwareUpdateClient {
 
         long fileSize = swuFile.length();
         try (InputStream in = new FileInputStream(swuFile)) {
+            String uploadPath = usedPath
+                    + "?skipVersionCheck=true&skipBatteryCheck=true&fileName="
+                    + java.net.URLEncoder.encode(swuFile.getName(), "UTF-8");
             VesperaHttp.Response r = VesperaHttp.postMultipartFile(
                     network,
                     host,
                     port,
-                    usedPath,
+                    uploadPath,
                     swuFile.getName(),
                     "application/octet-stream",
                     fileSize,

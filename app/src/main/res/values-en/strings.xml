@@ -171,6 +171,7 @@
     <string name="telescope_command_auth_missing">Status has no challenge or telescope ID: cannot sign the command.</string>
     <string name="telescope_command_auth_missing_challenge">Status has no challenge: cannot sign the command.</string>
     <string name="telescope_command_no_target">No target to resume: start an observation in Singularity first, or wait until status shows RA/Dec.</string>
+    <string name="telescope_command_no_site">Observatory coordinates are missing. In the Photos tab pick a city (or read coordinates from Vespera) and try again.</string>
     <string name="telescope_power_title">Mains power</string>
     <string name="telescope_power_message">The telescope is not plugged into mains power (running on battery). Accept to continue without more alerts until you plug it in, or Ignore: you will be asked again the next time you open this tab.</string>
     <string name="telescope_power_accept">Accept</string>
@@ -207,7 +208,8 @@
     <string name="telescope_confirm_park">Close the arm and park the telescope?</string>
     <string name="telescope_confirm_stop">Stop the current observation?</string>
     <string name="telescope_confirm_resume">Resume observation using the last target from status?</string>
-    <string name="telescope_confirm_init">Initialize the telescope?</string>
+    <string name="telescope_confirm_init">Initialize the telescope? Current date/time and observatory coordinates (Photos tab) will be sent.</string>
+    <string name="telescope_confirm_init_site">Initialize the telescope with observatory “%1$s” (%2$s)?</string>
     <string name="telescope_shutdown_title">Power off telescope</string>
     <string name="telescope_shutdown_message">Power off the Vespera? Wi‑Fi will drop and Helper will lose the connection.</string>
     <string name="status_tab_title">Vespera status</string>
@@ -330,6 +332,7 @@
     <string name="photo_sync_phase_done">Completed</string>
     <string name="photo_sync_phase_error">Error</string>
     <string name="photo_sync_listing">Reading USER folder…</string>
+    <string name="photo_sync_starting">Starting photo copy…</string>
     <string name="photo_sync_listing_dir">Reading %1$s · %2$d files</string>
     <string name="photo_sync_stats">%1$s · %2$s · copied %3$d, already present %4$d, deleted %5$d</string>
     <string name="photo_sync_eta">Estimated time: %1$s</string>

@@ -3,7 +3,9 @@ package com.vaonis.vesperahelper;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Network;
 import android.net.Uri;
@@ -37,6 +39,10 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /** Tab Telescopio: stato live Socket.IO 8083 + comandi REST 8082. */
 final class TelescopePanel {
+    private static final String TAG = "VesperaPower";
+    private static final String PREFS = "vespera_telescope";
+    private static final String KEY_LAST_OFF_MAINS = "last_consulted_off_mains";
+    private static final String KEY_LAST_POWER_KNOWN = "last_consulted_power_known";
     private static final long AUTO_REFRESH_MS = 30_000;
     private static final long PHOTO_USAGE_RETRY_MS = 60_000;
 
@@ -72,6 +78,8 @@ final class TelescopePanel {
     private AlertDialog powerDialog;
     private boolean powerWarningIgnoredThisVisit;
     private boolean powerWarningAccepted;
+    private String lastBatteryStatus = "";
+    private int lastBatteryPercent = -1;
     private VesperaStatusSnapshot lastSnap;
     private VesperaInternalStorage.Usage photoUsage;
     private long lastPhotoUsageAt;
@@ -167,12 +175,12 @@ final class TelescopePanel {
     }
 
     void onVisible() {
-        boolean alreadyVisible = visible;
         visible = true;
         powerWarningIgnoredThisVisit = false;
         photoUsageForceOnOpen = true;
         refreshPortInventory();
-        refreshStatusNow(!alreadyVisible);
+        if (lastSnap != null) maybeShowPowerWarning(lastSnap);
+        refreshStatusNow(true);
         startLive();
         scheduleAutoRefresh();
     }
@@ -181,7 +189,15 @@ final class TelescopePanel {
         visible = false;
         stopLive();
         mainHandler.removeCallbacks(autoRefresh);
+    }
+
+    void onAppPause() {
         dismissPowerWarning(false);
+    }
+
+    /** Fetch status and show the mains popup even if the Telescopio tab is not open. */
+    void probePowerWarning() {
+        refreshStatusNow(true);
     }
 
     boolean isTabActive() {
@@ -191,8 +207,8 @@ final class TelescopePanel {
     void onConnectionChanged() {
         refreshPortInventory();
         stopLive();
+        refreshStatusNow(true);
         if (visible) {
-            refreshStatusNow(false);
             startLive();
         }
     }
@@ -291,7 +307,10 @@ final class TelescopePanel {
     }
 
     private void applyLiveSnapshot(VesperaStatusSnapshot snapshot) {
-        if (!visible || snapshot == null) return;
+        if (snapshot == null) return;
+        rememberBattery(snapshot);
+        maybeShowPowerWarning(snapshot);
+        if (!visible) return;
         liveOk = true;
         setCommandsEnabled(true);
         String when = DateFormat.getTimeInstance(DateFormat.MEDIUM, Locale.getDefault())
@@ -300,7 +319,6 @@ final class TelescopePanel {
                 activity.getString(R.string.status_tab_last_update, when)
                         + " · " + activity.getString(R.string.status_tab_live));
         scroll.pin();
-        maybeShowPowerWarning(snapshot);
         updateObservationButtons(snapshot.isObserving());
     }
 
@@ -313,9 +331,12 @@ final class TelescopePanel {
             setCommandsEnabled(false);
             return;
         }
-        setCommandsEnabled(true);
-        if (!fetchInFlight.compareAndSet(false, true)) return;
-        if (userInitiated) {
+        if (visible) setCommandsEnabled(true);
+        if (!fetchInFlight.compareAndSet(false, true)) {
+            if (lastSnap != null) maybeShowPowerWarning(lastSnap);
+            return;
+        }
+        if (visible && userInitiated) {
             refreshStatus.setEnabled(false);
             setStatusMessage(activity.getString(R.string.status_tab_fetching),
                     lastUpdate.getText().toString());
@@ -328,8 +349,15 @@ final class TelescopePanel {
                     fetchHost, fetchPort, network);
             mainHandler.post(() -> {
                 fetchInFlight.set(false);
-                refreshStatus.setEnabled(isConnected());
-                if (!visible) return;
+                if (visible) refreshStatus.setEnabled(isConnected());
+                if (result.snapshot != null) {
+                    rememberBattery(result.snapshot);
+                    maybeShowPowerWarning(result.snapshot);
+                }
+                if (!visible) {
+                    if (result.snapshot != null) lastSnap = result.snapshot;
+                    return;
+                }
                 scroll.pin();
                 String when = DateFormat.getTimeInstance(DateFormat.MEDIUM, Locale.getDefault())
                         .format(new Date());
@@ -339,7 +367,6 @@ final class TelescopePanel {
                 } else {
                     setStatusSnapshot(result.snapshot,
                             activity.getString(R.string.status_tab_last_update, when));
-                    maybeShowPowerWarning(result.snapshot);
                     updateObservationButtons(result.snapshot.isObserving());
                 }
             });
@@ -583,9 +610,23 @@ final class TelescopePanel {
         final String fetchHost = host;
         final int fetchPort = resolveApiPort();
         final Network network = VesperaConnectionService.getActiveNetwork();
+        final VesperaStatusSnapshot snap = lastSnap;
         worker.execute(() -> {
+            VesperaLocationClient.Site initSite = null;
+            if (command == VesperaCommandClient.Command.INIT) {
+                initSite = resolveInitSite(network, snap);
+                if (initSite == null) {
+                    mainHandler.post(() -> {
+                        scroll.pin();
+                        commandInFlight.set(false);
+                        setCommandsEnabled(true);
+                        commandResult.setText(activity.getString(R.string.telescope_command_no_site));
+                    });
+                    return;
+                }
+            }
             VesperaCommandClient.Result result = VesperaCommandClient.send(
-                    fetchHost, fetchPort, network, command);
+                    fetchHost, fetchPort, network, command, initSite);
             mainHandler.post(() -> {
                 scroll.pin();
                 commandInFlight.set(false);
@@ -619,6 +660,8 @@ final class TelescopePanel {
                     commandResult.setText(activity.getString(R.string.telescope_command_auth_missing));
                 } else if ("no_target".equals(result.message)) {
                     commandResult.setText(activity.getString(R.string.telescope_command_no_target));
+                } else if ("no_site".equals(result.message)) {
+                    commandResult.setText(activity.getString(R.string.telescope_command_no_site));
                 } else {
                     commandResult.setText(activity.getString(
                             R.string.telescope_command_fail, label(command), result.message));
@@ -672,8 +715,25 @@ final class TelescopePanel {
             commandResult.setText(activity.getString(R.string.status_tab_need_wifi));
             return;
         }
-        confirmAction(label(command), activity.getString(confirmMessage(command)),
-                () -> runCommand(command));
+        String message;
+        if (command == VesperaCommandClient.Command.INIT) {
+            PhotoSyncStore store = PhotoSyncStore.from(activity);
+            if (store.hasSite()) {
+                String label = store.siteLabel();
+                if (label == null || label.trim().isEmpty()) {
+                    label = String.format(Locale.US, "%.4f, %.4f",
+                            store.siteLat(), store.siteLon());
+                }
+                String coords = String.format(Locale.US, "%.4f, %.4f",
+                        store.siteLat(), store.siteLon());
+                message = activity.getString(R.string.telescope_confirm_init_site, label, coords);
+            } else {
+                message = activity.getString(R.string.telescope_confirm_init);
+            }
+        } else {
+            message = activity.getString(confirmMessage(command));
+        }
+        confirmAction(label(command), message, () -> runCommand(command));
     }
 
     private void confirmShutdown() {
@@ -983,6 +1043,39 @@ final class TelescopePanel {
                 .create();
         dialog.setOnDismissListener(d -> scroll.restoreTo(x, y));
         dialog.show();
+        UiStyle.styleAlertButtons(dialog);
+    }
+
+    private VesperaLocationClient.Site resolveInitSite(Network network,
+            VesperaStatusSnapshot snap) {
+        PhotoSyncStore store = PhotoSyncStore.from(activity);
+        if (store.hasSite()) {
+            return new VesperaLocationClient.Site(store.siteLat(), store.siteLon());
+        }
+        VesperaLocationClient.Site fromApi = VesperaLocationClient.fetch(network);
+        if (fromApi != null) return fromApi;
+        return parseSnapLocation(snap);
+    }
+
+    private static VesperaLocationClient.Site parseSnapLocation(VesperaStatusSnapshot snap) {
+        if (snap == null) return null;
+        String loc = snap.location;
+        if (loc == null || loc.isEmpty()) return null;
+        int comma = loc.lastIndexOf(',');
+        if (comma <= 0 || comma >= loc.length() - 1) return null;
+        String lonPart = loc.substring(comma + 1).trim();
+        String before = loc.substring(0, comma).trim();
+        int sep = Math.max(before.lastIndexOf(' '), before.lastIndexOf('·'));
+        String latPart = sep >= 0 ? before.substring(sep + 1).trim() : before;
+        try {
+            double lat = Double.parseDouble(latPart);
+            double lon = Double.parseDouble(lonPart);
+            if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+            if (Math.abs(lat) < 0.01 && Math.abs(lon) < 0.01) return null;
+            return new VesperaLocationClient.Site(lat, lon);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private String formatUnavailable(String detail) {
@@ -992,36 +1085,88 @@ final class TelescopePanel {
     }
 
     private void maybeShowPowerWarning(VesperaStatusSnapshot snap) {
-        if (!visible || snap == null || activity.isFinishing()) return;
-        if (snap.isOnMainsPower()) {
+        if (activity.isFinishing() || activity.isDestroyed()) return;
+        String status = effectiveBatteryStatus(snap);
+        boolean onMains = VesperaStatusSnapshot.isOnMainsPower(status);
+        boolean offMains = VesperaStatusSnapshot.isOffMainsPower(status);
+        Log.i(TAG, "power status=" + status
+                + " pct=" + lastBatteryPercent
+                + " onMains=" + onMains
+                + " offMains=" + offMains
+                + " accepted=" + powerWarningAccepted
+                + " ignored=" + powerWarningIgnoredThisVisit);
+        if (onMains) {
             powerWarningAccepted = false;
+            rememberConsultedPower(false);
             dismissPowerWarning(true);
             return;
         }
-        if (!snap.isOffMainsPower()) return;
-        if (powerWarningAccepted || powerWarningIgnoredThisVisit) return;
+        if (!offMains) return;
+        boolean changedFromMains = wasLastConsultedOnMains();
+        rememberConsultedPower(true);
+        if (powerWarningIgnoredThisVisit) return;
+        if (powerWarningAccepted && !changedFromMains) return;
+        if (changedFromMains) powerWarningAccepted = false;
         if (powerDialog != null && powerDialog.isShowing()) return;
         final int x = scroll.getScrollX();
         final int y = scroll.getScrollY();
-        AlertDialog dialog = new AlertDialog.Builder(activity)
-                .setTitle(R.string.telescope_power_title)
-                .setMessage(R.string.telescope_power_message)
-                .setPositiveButton(R.string.telescope_power_accept, (d, w) -> {
-                    powerWarningAccepted = true;
-                    powerWarningIgnoredThisVisit = false;
-                })
-                .setNegativeButton(R.string.telescope_power_ignore, (d, w) -> {
-                    powerWarningAccepted = false;
-                    powerWarningIgnoredThisVisit = true;
-                })
-                .setOnCancelListener(d -> {
-                    powerWarningAccepted = false;
-                    powerWarningIgnoredThisVisit = true;
-                })
-                .create();
-        powerDialog = dialog;
-        dialog.setOnDismissListener(d -> scroll.restoreTo(x, y));
-        dialog.show();
+        View hostView = activity.getWindow() == null ? null : activity.getWindow().getDecorView();
+        Runnable show = () -> {
+            if (activity.isFinishing() || activity.isDestroyed()) return;
+            if (powerDialog != null && powerDialog.isShowing()) return;
+            AlertDialog dialog = new AlertDialog.Builder(activity)
+                    .setTitle(R.string.telescope_power_title)
+                    .setMessage(R.string.telescope_power_message)
+                    .setPositiveButton(R.string.telescope_power_accept, (d, w) -> {
+                        powerWarningAccepted = true;
+                        powerWarningIgnoredThisVisit = false;
+                    })
+                    .setNegativeButton(R.string.telescope_power_ignore, (d, w) -> {
+                        powerWarningAccepted = false;
+                        powerWarningIgnoredThisVisit = true;
+                    })
+                    .setOnCancelListener(d -> {
+                        powerWarningAccepted = false;
+                        powerWarningIgnoredThisVisit = true;
+                    })
+                    .create();
+            powerDialog = dialog;
+            dialog.setOnDismissListener(d -> {
+                if (visible) scroll.restoreTo(x, y);
+            });
+            dialog.show();
+            UiStyle.styleAlertButtons(dialog);
+        };
+        if (hostView != null) hostView.post(show);
+        else mainHandler.post(show);
+    }
+
+    private void rememberBattery(VesperaStatusSnapshot snap) {
+        if (snap == null) return;
+        if (!snap.batteryStatus.isEmpty()) lastBatteryStatus = snap.batteryStatus;
+        if (snap.batteryPercent >= 0) lastBatteryPercent = snap.batteryPercent;
+    }
+
+    private String effectiveBatteryStatus(VesperaStatusSnapshot snap) {
+        if (snap != null && !snap.batteryStatus.isEmpty()) return snap.batteryStatus;
+        return lastBatteryStatus;
+    }
+
+    private SharedPreferences powerPrefs() {
+        return activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    private boolean wasLastConsultedOnMains() {
+        SharedPreferences prefs = powerPrefs();
+        if (!prefs.getBoolean(KEY_LAST_POWER_KNOWN, false)) return true;
+        return !prefs.getBoolean(KEY_LAST_OFF_MAINS, false);
+    }
+
+    private void rememberConsultedPower(boolean offMains) {
+        powerPrefs().edit()
+                .putBoolean(KEY_LAST_POWER_KNOWN, true)
+                .putBoolean(KEY_LAST_OFF_MAINS, offMains)
+                .apply();
     }
 
     private void dismissPowerWarning(boolean resetIgnore) {

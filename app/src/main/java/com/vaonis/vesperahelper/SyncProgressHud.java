@@ -94,6 +94,7 @@ final class SyncProgressHud {
         try {
             service.startActivity(new Intent(service, SyncProgressActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                            | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                             | Intent.FLAG_ACTIVITY_SINGLE_TOP));
         } catch (Exception ignored) {
         }

@@ -14,13 +14,19 @@ final class VesperaLastTarget {
 
     static void rememberFromStatus(JSONObject payload) {
         JSONObject operation = findOperation(payload);
-        remember(targetOf(operation), operation);
+        remember(targetOf(operation), operation, payload);
     }
 
     /** Same target shown in the Telescopio status rows. */
     static void remember(JSONObject target, JSONObject operation) {
+        remember(target, operation, null);
+    }
+
+    static void remember(JSONObject target, JSONObject operation, JSONObject payload) {
         JSONObject body = buildBody(target, operation);
         if (body == null || !hasCoordinates(body)) return;
+        keepPreviousCameraParams(body);
+        fillFromCaptureStore(body, payload);
         bodyJson = body.toString();
         label = firstNonEmpty(
                 text(body, "objectName"),
@@ -35,6 +41,40 @@ final class VesperaLastTarget {
 
     static String startObservationBody() {
         return hasTarget() ? bodyJson : "";
+    }
+
+    /**
+     * Firmware {@code startObservation} requires top-level {@code gain} and
+     * {@code exposureMicroSec}. Status may store them on {@code capture},
+     * {@code cameraParams}, or {@code captureStore} rather than all three.
+     */
+    static String startObservationBody(VesperaStatusSnapshot snap) {
+        String raw = startObservationBody();
+        if (raw.isEmpty()) return "";
+        try {
+            JSONObject body = new JSONObject(raw);
+            body.put("resume", true);
+            if (!hasNumber(body, "gain") && snap != null && snap.gain > 0) {
+                body.put("gain", snap.gain);
+            }
+            if (!hasNumber(body, "exposureMicroSec") && snap != null
+                    && snap.exposureMicroSec > 0) {
+                body.put("exposureMicroSec", snap.exposureMicroSec);
+            }
+            if ((!hasNumber(body, "gain") || !hasNumber(body, "exposureMicroSec"))
+                    && snap != null) {
+                JSONObject payload = parseJson(snap.rawJson);
+                copyCameraParams(body, payload);
+                fillFromCaptureStore(body, payload);
+            }
+            if (!hasNumber(body, "gain")) body.put("gain", 150);
+            if (!hasNumber(body, "exposureMicroSec")) {
+                body.put("exposureMicroSec", 10_000_000L);
+            }
+            return body.toString();
+        } catch (Exception ignored) {
+            return raw;
+        }
     }
 
     static String label() {
@@ -86,14 +126,94 @@ final class VesperaLastTarget {
                 } catch (Exception ignored) {
                 }
             }
-            JSONObject capture = operation.optJSONObject("capture");
-            JSONObject cam = capture == null ? null : capture.optJSONObject("cameraParams");
-            if (cam != null) {
-                putIfPresent(body, cam, "gain");
-                putIfPresent(body, cam, "exposureMicroSec");
+            copyCameraParams(body, operation);
+        }
+        copyCameraParams(body, src, target);
+        return body;
+    }
+
+    private static void copyCameraParams(JSONObject body, JSONObject... sources) {
+        if (body == null || sources == null) return;
+        for (JSONObject src : sources) {
+            if (src == null) continue;
+            putCameraNumber(body, src, "gain");
+            putCameraNumber(body, src, "exposureMicroSec");
+            JSONObject capture = src.optJSONObject("capture");
+            if (capture != null) {
+                putCameraNumber(body, capture, "gain");
+                putCameraNumber(body, capture, "exposureMicroSec");
+                JSONObject nested = capture.optJSONObject("cameraParams");
+                putCameraNumber(body, nested, "gain");
+                putCameraNumber(body, nested, "exposureMicroSec");
+            }
+            JSONObject cam = src.optJSONObject("cameraParams");
+            putCameraNumber(body, cam, "gain");
+            putCameraNumber(body, cam, "exposureMicroSec");
+        }
+    }
+
+    private static void putCameraNumber(JSONObject dest, JSONObject src, String key) {
+        if (dest == null || src == null || hasNumber(dest, key)) return;
+        if (!src.has(key) || src.isNull(key)) return;
+        Double value = asDouble(src.opt(key));
+        if (value == null || value <= 0) return;
+        try {
+            if ("gain".equals(key)) dest.put(key, value.intValue());
+            else dest.put(key, value.longValue());
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void keepPreviousCameraParams(JSONObject body) {
+        if (hasNumber(body, "gain") && hasNumber(body, "exposureMicroSec")) return;
+        copyCameraParams(body, parseJson(bodyJson));
+    }
+
+    private static void fillFromCaptureStore(JSONObject body, JSONObject payload) {
+        if (body == null || payload == null) return;
+        JSONObject store = payload.optJSONObject("captureStore");
+        if (store == null) {
+            JSONObject nested = payload.optJSONObject("result");
+            if (nested == null) nested = payload.optJSONObject("data");
+            store = nested == null ? null : nested.optJSONObject("captureStore");
+        }
+        if (store == null) return;
+        JSONArray captures = store.optJSONArray("storedCaptures");
+        if (captures == null || captures.length() == 0) return;
+        String storeId = text(body, "storeId");
+        JSONObject chosen = captures.optJSONObject(captures.length() - 1);
+        if (!storeId.isEmpty()) {
+            for (int i = captures.length() - 1; i >= 0; i--) {
+                JSONObject item = captures.optJSONObject(i);
+                if (item != null && storeId.equals(text(item, "storeId"))) {
+                    chosen = item;
+                    break;
+                }
             }
         }
-        return body;
+        if (chosen == null) return;
+        copyCameraParams(body, chosen);
+        if (!hasText(body, "storeId")) putIfPresent(body, chosen, "storeId");
+    }
+
+    private static boolean hasNumber(JSONObject obj, String key) {
+        if (obj == null || !obj.has(key) || obj.isNull(key)) return false;
+        return asDouble(obj.opt(key)) != null;
+    }
+
+    private static boolean hasText(JSONObject obj, String key) {
+        return !text(obj, key).isEmpty();
+    }
+
+    private static JSONObject parseJson(String raw) {
+        if (raw == null) return null;
+        String trim = raw.trim();
+        if (trim.isEmpty() || trim.charAt(0) != '{') return null;
+        try {
+            return new JSONObject(trim);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private static void copyNames(JSONObject dest, JSONObject src) {

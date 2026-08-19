@@ -535,7 +535,7 @@ public final class MainActivity extends Activity {
     }
 
     private void notifyTelescopePanel() {
-        if (telescopePanel == null || currentTab != TAB_TELESCOPE) return;
+        if (telescopePanel == null) return;
         syncTelescopePanelHost();
         telescopePanel.onConnectionChanged();
     }
@@ -1319,14 +1319,19 @@ public final class MainActivity extends Activity {
         }
         refreshVesperaScan();
         if (photoPanel != null && currentTab == TAB_PHOTOS) photoPanel.onResume();
-        if (telescopePanel != null && currentTab == TAB_TELESCOPE) {
+        if (telescopePanel != null) {
             syncTelescopePanelHost();
-            telescopePanel.onVisible();
+            if (currentTab == TAB_TELESCOPE) {
+                telescopePanel.onVisible();
+            } else {
+                telescopePanel.probePowerWarning();
+            }
         }
         if (systemPanel != null && currentTab == TAB_SYSTEM) systemPanel.onVisible();
     }
 
     @Override protected void onDestroy() {
+        if (photoPanel != null) photoPanel.onPause();
         if (telescopePanel != null) telescopePanel.shutdown();
         stopWatchdog();
         if (instrumentWatchdog != null) {
@@ -1351,8 +1356,10 @@ public final class MainActivity extends Activity {
             unregisterReceiver(instrumentStatusReceiver);
             instrumentStatusReceiverRegistered = false;
         }
-        if (photoPanel != null && currentTab == TAB_PHOTOS) photoPanel.onPause();
-        if (telescopePanel != null && currentTab == TAB_TELESCOPE) telescopePanel.onHidden();
+        if (telescopePanel != null) {
+            if (currentTab == TAB_TELESCOPE) telescopePanel.onHidden();
+            telescopePanel.onAppPause();
+        }
         if (systemPanel != null && currentTab == TAB_SYSTEM) systemPanel.onHidden();
         super.onPause();
     }

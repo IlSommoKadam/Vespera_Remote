@@ -88,20 +88,34 @@ final class VesperaStatusSnapshot {
 
     /** True when status says the charger / mains is connected. */
     boolean isOnMainsPower() {
-        String status = batteryStatus.trim().toUpperCase(java.util.Locale.US);
-        if (status.isEmpty()) return false;
-        if (isOffMainsPower()) return false;
-        return status.contains("CONNECT") || status.contains("CHARG")
-                || "AC".equals(status) || "FULL".equals(status) || "PLUGGED".equals(status);
+        return isOnMainsPower(batteryStatus);
     }
 
     /** True only when status clearly says the telescope is on battery. */
     boolean isOffMainsPower() {
-        String status = batteryStatus.trim().toUpperCase(java.util.Locale.US);
+        return isOffMainsPower(batteryStatus);
+    }
+
+    static boolean isOnMainsPower(String batteryStatus) {
+        String status = normalizeBatteryStatus(batteryStatus);
+        if (status.isEmpty() || isOffMainsPower(status)) return false;
+        return "CONNECTED".equals(status) || "CHARGING".equals(status)
+                || "AC".equals(status) || "FULL".equals(status) || "PLUGGED".equals(status)
+                || status.contains("CHARGING")
+                || (status.contains("CONNECTED") && !status.contains("DISCONNECTED"));
+    }
+
+    static boolean isOffMainsPower(String batteryStatus) {
+        String status = normalizeBatteryStatus(batteryStatus);
         if (status.isEmpty()) return false;
-        return status.contains("DISCONNECT") || status.contains("UNPLUG")
+        return status.contains("DISCONNECTED") || status.contains("UNPLUG")
                 || "BATTERY".equals(status) || status.contains("DISCHARG")
-                || status.contains("NOT_CONNECTED") || status.contains("NOT CONNECTED");
+                || status.contains("NOT_CONNECTED") || status.contains("NOT CONNECTED")
+                || status.contains("NOT_CHARG") || status.contains("NOT CHARG");
+    }
+
+    private static String normalizeBatteryStatus(String batteryStatus) {
+        return batteryStatus == null ? "" : batteryStatus.trim().toUpperCase(java.util.Locale.US);
     }
 
     boolean isObserving() {

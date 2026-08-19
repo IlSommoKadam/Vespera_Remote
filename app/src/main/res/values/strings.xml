@@ -171,6 +171,7 @@
     <string name="telescope_command_auth_missing">Manca challenge o ID telescopio nello status: non posso firmare il comando.</string>
     <string name="telescope_command_auth_missing_challenge">Nello status manca il challenge: non posso firmare il comando.</string>
     <string name="telescope_command_no_target">Nessun target da riprendere: avvia prima un’osservazione da Singularity, oppure aspetta che lo stato mostri RA/Dec.</string>
+    <string name="telescope_command_no_site">Mancano le coordinate dell’osservatorio. Nella tab Foto scegli una città (o leggi le coordinate dal Vespera) e riprova.</string>
     <string name="telescope_power_title">Rete elettrica</string>
     <string name="telescope_power_message">Il telescopio non è collegato alla rete elettrica (funziona a batteria). Accetta per continuare senza altri avvisi finché non lo ricolleghi, oppure ignora: ti verrà chiesto di nuovo alla prossima apertura di questa tab.</string>
     <string name="telescope_power_accept">Accetta</string>
@@ -207,7 +208,8 @@
     <string name="telescope_confirm_park">Chiudere il braccio e parcheggiare il telescopio?</string>
     <string name="telescope_confirm_stop">Fermare l’osservazione in corso?</string>
     <string name="telescope_confirm_resume">Riprendere l’osservazione con l’ultimo target visto nello stato?</string>
-    <string name="telescope_confirm_init">Inizializzare il telescopio?</string>
+    <string name="telescope_confirm_init">Inizializzare il telescopio? Servono data/ora attuali e le coordinate dell’osservatorio (tab Foto).</string>
+    <string name="telescope_confirm_init_site">Inizializzare il telescopio con l’osservatorio «%1$s» (%2$s)?</string>
     <string name="telescope_shutdown_title">Spegni telescopio</string>
     <string name="telescope_shutdown_message">Spegnere il Vespera? Il Wi‑Fi si chiuderà e Helper perderà la connessione.</string>
     <string name="status_tab_title">Stato Vespera</string>
@@ -330,6 +332,7 @@
     <string name="photo_sync_phase_done">Completata</string>
     <string name="photo_sync_phase_error">Errore</string>
     <string name="photo_sync_listing">Lettura cartella USER…</string>
+    <string name="photo_sync_starting">Avvio copia foto…</string>
     <string name="photo_sync_listing_dir">Lettura %1$s · %2$d file</string>
     <string name="photo_sync_stats">%1$s · %2$s · copiati %3$d, già presenti %4$d, cancellati %5$d</string>
     <string name="photo_sync_eta">Tempo stimato: %1$s</string>
