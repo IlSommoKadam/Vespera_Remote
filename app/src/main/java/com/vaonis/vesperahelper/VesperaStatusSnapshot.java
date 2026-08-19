@@ -108,6 +108,15 @@ final class VesperaStatusSnapshot {
         return "RUNNING".equals(observationStatus);
     }
 
+    /** Tracking + imaging — photos are being written to internal storage. */
+    boolean isTrackingAcquisition() {
+        if (isObserving()) return true;
+        if ("ON".equals(tracking) || "STARTING".equals(tracking)) return true;
+        String blob = (operationType + " " + step + " " + state).toUpperCase(java.util.Locale.US);
+        return blob.contains("ACQUI") || blob.contains("STACK")
+                || blob.contains("IMAGE") || blob.contains("EXPOS");
+    }
+
     boolean canResumeObservation() {
         if (isObserving()) return false;
         if ("STOPPED".equals(observationStatus)) return true;

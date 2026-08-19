@@ -30,6 +30,7 @@ import java.util.Calendar;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -77,6 +78,7 @@ public final class PhotoSyncService extends Service {
     private static final long STORAGE_SYNC_COOLDOWN_MS = 10 * 60_000L;
     private static final long AUTO_RETRY_MS = 5 * 60_000L;
     private static final long MIN_AUTO_DELAY_MS = 5_000L;
+    private static final int[] STORAGE_CHECK_MINUTES = {10, 11};
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -126,6 +128,7 @@ public final class PhotoSyncService extends Service {
         }
     };
     private final Runnable autoSyncAlarm = () -> syncExecutor.execute(() -> maybeAutoSync(false));
+    private final Runnable hourlyStorageCheck = () -> worker.execute(this::maybeCheckInternalStorage);
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             worker.execute(() -> {
@@ -246,6 +249,7 @@ public final class PhotoSyncService extends Service {
         });
         mainHandler.postDelayed(tick, TICK_MS);
         scheduleNextAutoSync();
+        scheduleHourlyStorageCheck();
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -660,6 +664,76 @@ public final class PhotoSyncService extends Service {
         Log.i(TAG, "next auto-sync in " + (delay / 1000L) + "s");
     }
 
+    private void scheduleHourlyStorageCheck() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(this::scheduleHourlyStorageCheck);
+            return;
+        }
+        mainHandler.removeCallbacks(hourlyStorageCheck);
+        long delay = delayUntilNextStorageSlot();
+        mainHandler.postDelayed(hourlyStorageCheck, delay);
+        Log.i(TAG, "next internal-storage check in " + (delay / 1000L) + "s");
+    }
+
+    private long delayUntilNextStorageSlot() {
+        TimeZone zone = syncStore != null ? syncStore.zone() : TimeZone.getDefault();
+        long nowMs = System.currentTimeMillis();
+        Calendar hour = Calendar.getInstance(zone);
+        hour.setTimeInMillis(nowMs);
+        hour.set(Calendar.SECOND, 0);
+        hour.set(Calendar.MILLISECOND, 0);
+        hour.set(Calendar.MINUTE, 0);
+        for (int hourOffset = 0; hourOffset <= 1; hourOffset++) {
+            Calendar base = (Calendar) hour.clone();
+            if (hourOffset > 0) base.add(Calendar.HOUR_OF_DAY, hourOffset);
+            for (int slot : STORAGE_CHECK_MINUTES) {
+                Calendar cand = (Calendar) base.clone();
+                cand.set(Calendar.MINUTE, slot);
+                long at = cand.getTimeInMillis();
+                if (at > nowMs) {
+                    long delay = at - nowMs;
+                    return delay < MIN_AUTO_DELAY_MS ? MIN_AUTO_DELAY_MS : delay;
+                }
+            }
+        }
+        return 60 * 60_000L;
+    }
+
+    private void maybeCheckInternalStorage() {
+        scheduleHourlyStorageCheck();
+        if (!isVesperaConnected()) {
+            Log.i(TAG, "internal storage skip: Vespera offline");
+            return;
+        }
+        synchronized (syncLock) {
+            if (syncing) {
+                Log.i(TAG, "internal storage skip: photo sync in progress");
+                return;
+            }
+        }
+        Network network = resolveVesperaNetwork();
+        if (network == null) return;
+        int apiPort = -1;
+        VesperaPortScan scan = VesperaPortScanner.lastScan();
+        if (scan != null && scan.apiRestPort > 0) apiPort = scan.apiRestPort;
+        VesperaStatusSnapshot snap = VesperaStatusClient.fetch(PhotoSyncEngine.HOST, apiPort, network);
+        if (snap == null || !snap.isTrackingAcquisition()) {
+            Log.i(TAG, "internal storage skip: not tracking/acquisition");
+            return;
+        }
+        String model = snap.model;
+        VesperaInternalStorage.Usage usage = VesperaInternalStorage.probe(
+                network, PhotoSyncEngine.HOST, apiPort, model);
+        if (usage == null) {
+            Log.w(TAG, "internal storage probe failed");
+            return;
+        }
+        Log.i(TAG, "internal storage " + usage.label);
+        if (usage.usedPercent >= STORAGE_SYNC_PERCENT) {
+            syncExecutor.execute(this::maybeSyncForFullStorage);
+        }
+    }
+
     private void maybeSyncForFullStorage() {
         synchronized (syncLock) {
             if (syncing) return;
@@ -690,10 +764,13 @@ public final class PhotoSyncService extends Service {
                 return;
             }
             if (!force && !resume && !syncStore.isAutoDue(System.currentTimeMillis())) {
+                Log.i(TAG, "auto-sync skip: not due, next "
+                        + formatClock(syncStore.nextAutoAt(System.currentTimeMillis())));
                 refreshSyncHint();
                 publish();
                 return;
             }
+            Log.i(TAG, force ? "sync forced" : "auto-sync due");
             ensureMountedForSync();
             File root = DaemonDisk.photosDir(this);
             if (!DaemonDisk.isPhotosBoundLive(root)) {
@@ -796,14 +873,14 @@ public final class PhotoSyncService extends Service {
                     if (hud != null) hud.bind(lastProgress);
                 }
                 fileCount = PhotoSyncEngine.countLocalPhotos(root);
-                refreshSyncHint();
-                publish();
-                sendBroadcast(new Intent(ACTION_PROGRESS).setPackage(getPackageName()));
                 if (hud != null && paused) hud.hideByUser();
             } finally {
                 synchronized (syncLock) {
                     syncing = false;
                 }
+                refreshSyncHint();
+                publish();
+                sendBroadcast(progressIntent());
             }
         } finally {
             if (syncStore != null && !syncStore.paused()) {
@@ -950,7 +1027,12 @@ public final class PhotoSyncService extends Service {
             hud.bind(progress);
             hud.hideLater(8_000);
         }
-        sendBroadcast(new Intent(ACTION_PROGRESS).setPackage(getPackageName()));
+        sendBroadcast(progressIntent());
+    }
+
+    private Intent progressIntent() {
+        return new Intent(ACTION_PROGRESS).setPackage(getPackageName())
+                .putExtra(EXTRA_SYNCING, syncing);
     }
 
     private void onEngineProgress(SyncProgress progress) {
@@ -968,7 +1050,7 @@ public final class PhotoSyncService extends Service {
                 && !progress.phase.equals(lastBroadcastPhase);
         if (phaseChanged || now - lastNotifyAt > 250) {
             lastBroadcastPhase = progress.phase == null ? "" : progress.phase;
-            sendBroadcast(new Intent(ACTION_PROGRESS).setPackage(getPackageName()));
+            sendBroadcast(progressIntent());
             lastNotifyAt = now;
             getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification());
         }
@@ -1229,6 +1311,7 @@ public final class PhotoSyncService extends Service {
         if (resume && syncStore != null) syncStore.markInterrupted(this);
         mainHandler.removeCallbacks(tick);
         mainHandler.removeCallbacks(autoSyncAlarm);
+        mainHandler.removeCallbacks(hourlyStorageCheck);
         if (connectionReceiverRegistered) {
             try { unregisterReceiver(connectionReceiver); } catch (Exception ignored) {}
             connectionReceiverRegistered = false;

@@ -318,9 +318,15 @@ final class PhotoPanel {
 
         syncStatus = body(activity.getString(R.string.photo_sync_idle));
         syncNow = action(activity.getString(R.string.photo_btn_sync_now), COLOR_CONNECTED);
-        syncNow.setOnClickListener(v -> PhotoSyncService.syncNow(activity));
+        syncNow.setOnClickListener(v -> {
+            refreshCopyButtons(true);
+            PhotoSyncService.syncNow(activity);
+        });
         continueSync = action(activity.getString(R.string.photo_btn_continue), COLOR_DETECTED);
-        continueSync.setOnClickListener(v -> PhotoSyncService.resumeSync(activity));
+        continueSync.setOnClickListener(v -> {
+            refreshCopyButtons(true);
+            PhotoSyncService.resumeSync(activity);
+        });
         continueSync.setVisibility(View.GONE);
         overlayPermission = action(activity.getString(R.string.photo_sync_overlay_btn), COLOR_CONNECTING);
         overlayPermission.setOnClickListener(v -> requestOverlayPermission());
@@ -375,9 +381,11 @@ final class PhotoPanel {
         if (receiverRegistered) {
             refreshHdSpace();
             maybeShowDiskWarning();
+            refreshCopyButtons(isCopyRunning());
             return;
         }
         IntentFilter filter = new IntentFilter(PhotoSyncService.ACTION_STATUS);
+        filter.addAction(PhotoSyncService.ACTION_PROGRESS);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             activity.registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
@@ -390,6 +398,7 @@ final class PhotoPanel {
         refreshUserFolderHint();
         refreshHdSpace();
         maybeShowDiskWarning();
+        refreshCopyButtons(isCopyRunning());
     }
 
     void onPause() {
@@ -403,6 +412,14 @@ final class PhotoPanel {
     private final BroadcastReceiver statusReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (intent == null) return;
+            if (PhotoSyncService.ACTION_PROGRESS.equals(intent.getAction())) {
+                boolean syncing = intent.hasExtra(PhotoSyncService.EXTRA_SYNCING)
+                        ? intent.getBooleanExtra(PhotoSyncService.EXTRA_SYNCING, false)
+                        : isCopyRunning();
+                bindCopyProgressText();
+                refreshCopyButtons(syncing);
+                return;
+            }
             String hd = intent.getStringExtra(PhotoSyncService.EXTRA_HD);
             String sync = intent.getStringExtra(PhotoSyncService.EXTRA_SYNC);
             String ftp = intent.getStringExtra(PhotoSyncService.EXTRA_FTP);
@@ -435,16 +452,35 @@ final class PhotoPanel {
             refreshHourFields();
             locationStatus.setText(locationText());
             refreshMountButtons();
-            boolean paused = intent.getBooleanExtra(PhotoSyncService.EXTRA_PAUSED, false);
-            boolean syncing = intent.getBooleanExtra(PhotoSyncService.EXTRA_SYNCING, false);
-            boolean canContinue = paused || syncStore.inProgress() || syncing;
-            continueSync.setVisibility(canContinue ? View.VISIBLE : View.GONE);
-            continueSync.setEnabled(canContinue);
-            UiStyle.applyRaised(continueSync, canContinue ? COLOR_DETECTED : COLOR_OFFLINE, canContinue);
+            refreshCopyButtons(intent.getBooleanExtra(PhotoSyncService.EXTRA_SYNCING, false));
             refreshHdSpace();
             maybeShowDiskWarning();
         }
     };
+
+    private static boolean isCopyRunning() {
+        SyncProgress progress = SyncProgressHud.latest;
+        return progress != null && progress.active;
+    }
+
+    private void bindCopyProgressText() {
+        SyncProgress progress = SyncProgressHud.latest;
+        if (progress == null || !progress.active) return;
+        if (progress.fileTotal > 0 && progress.fileName != null && !progress.fileName.isEmpty()) {
+            syncStatus.setText(activity.getString(R.string.photos_sync_file,
+                    progress.fileIndex, progress.fileTotal, progress.fileName));
+        }
+    }
+
+    /** Copia foto ora / Continua stay inert while a transfer is already running. */
+    private void refreshCopyButtons(boolean syncing) {
+        boolean unfinished = syncStore.paused() || syncStore.inProgress();
+        boolean enableNow = !syncing;
+        boolean enableContinue = unfinished && !syncing;
+        UiStyle.applyRaised(syncNow, enableNow ? COLOR_CONNECTED : COLOR_OFFLINE, enableNow);
+        continueSync.setVisibility((unfinished || syncing) ? View.VISIBLE : View.GONE);
+        UiStyle.applyRaised(continueSync, enableContinue ? COLOR_DETECTED : COLOR_OFFLINE, enableContinue);
+    }
 
     private void bindDisks(List<UsbDisk> disks) {
         listedCount = disks.size();

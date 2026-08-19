@@ -244,44 +244,61 @@ final class PhotoSyncStore {
         return calendar.getTimeInMillis();
     }
 
+    /**
+     * First scheduled slot strictly after {@code refMs}. Day slots start at
+     * {@link #dayStartHour()} every {@link #dayIntervalHours()} until
+     * {@link #dayEndHour()}; night slots start at day end every
+     * {@link #nightIntervalHours()} until the next day start.
+     */
     private long nextSlotAfter(long refMs) {
         Calendar calendar = Calendar.getInstance(zone());
         calendar.setTimeInMillis(refMs);
-        int hour = calendar.get(Calendar.HOUR_OF_DAY);
-        boolean daytime = hour >= dayStartHour() && hour < dayEndHour();
-
-        int start = dayStartHour();
-        int end = dayEndHour();
-
-        long periodStartMs;
-        long intervalMs;
-        if (daytime) {
-            calendar.set(Calendar.HOUR_OF_DAY, start);
-            calendar.set(Calendar.MINUTE, 0);
-            calendar.set(Calendar.SECOND, 0);
-            calendar.set(Calendar.MILLISECOND, 0);
-            periodStartMs = calendar.getTimeInMillis();
-            intervalMs = dayIntervalMs();
-        } else {
-            intervalMs = nightIntervalMs();
-            calendar.set(Calendar.HOUR_OF_DAY, end);
-            calendar.set(Calendar.MINUTE, 0);
-            calendar.set(Calendar.SECOND, 0);
-            calendar.set(Calendar.MILLISECOND, 0);
-            if (hour < end) calendar.add(Calendar.DAY_OF_YEAR, -1);
-            periodStartMs = calendar.getTimeInMillis();
+        calendar.set(Calendar.MINUTE, 0);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        calendar.set(Calendar.HOUR_OF_DAY, dayStartHour());
+        long dayStartMs = calendar.getTimeInMillis();
+        calendar.set(Calendar.HOUR_OF_DAY, dayEndHour());
+        long dayEndMs = calendar.getTimeInMillis();
+        if (dayEndMs <= dayStartMs) {
+            calendar.add(Calendar.DAY_OF_YEAR, 1);
+            dayEndMs = calendar.getTimeInMillis();
         }
 
+        if (refMs < dayStartMs) {
+            calendar.setTimeInMillis(dayStartMs);
+            calendar.add(Calendar.DAY_OF_YEAR, -1);
+            calendar.set(Calendar.HOUR_OF_DAY, dayEndHour());
+            calendar.set(Calendar.MINUTE, 0);
+            calendar.set(Calendar.SECOND, 0);
+            calendar.set(Calendar.MILLISECOND, 0);
+            long nightStartMs = calendar.getTimeInMillis();
+            return nextIntervalSlot(nightStartMs, nightIntervalMs(), refMs, dayStartMs);
+        }
+        if (refMs < dayEndMs) {
+            return nextIntervalSlot(dayStartMs, dayIntervalMs(), refMs, dayEndMs);
+        }
+        calendar.setTimeInMillis(dayStartMs);
+        calendar.add(Calendar.DAY_OF_YEAR, 1);
+        long nextDayStartMs = calendar.getTimeInMillis();
+        return nextIntervalSlot(dayEndMs, nightIntervalMs(), refMs, nextDayStartMs);
+    }
+
+    /** Next interval boundary strictly after {@code refMs}, or {@code periodEndMs}. */
+    private static long nextIntervalSlot(long periodStartMs, long intervalMs, long refMs,
+                                         long periodEndMs) {
+        if (intervalMs <= 0) return periodEndMs;
+        if (refMs < periodStartMs) return periodStartMs;
         long elapsed = refMs - periodStartMs;
-        if (elapsed < 0) elapsed = 0;
-        long slots = (elapsed + intervalMs - 1) / intervalMs; // ceil
-        return periodStartMs + slots * intervalMs;
+        long slot = periodStartMs + (elapsed / intervalMs + 1) * intervalMs;
+        if (slot >= periodEndMs) return periodEndMs;
+        return slot;
     }
 
     long nextAutoAt(long nowMs) {
         long last = Math.max(lastAt(), lastAttemptAt());
-        long ref = Math.max(nowMs, last <= 0 ? nowMs : last);
-        return nextSlotAfter(ref);
+        if (last <= 0) return nowMs;
+        return nextSlotAfter(last);
     }
 
     boolean isAutoDue(long nowMs) {

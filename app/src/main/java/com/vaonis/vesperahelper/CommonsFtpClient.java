@@ -1,6 +1,7 @@
 package com.vaonis.vesperahelper;
 
 import android.net.Network;
+import android.util.Log;
 
 import org.apache.commons.net.ftp.FTP;
 import org.apache.commons.net.ftp.FTPClient;
@@ -27,6 +28,7 @@ import javax.net.SocketFactory;
  * {@link Network} so PASV data sockets follow Wi‑Fi rather than Ethernet.
  */
 final class CommonsFtpClient implements Closeable {
+    private static final String TAG = "VesperaFtp";
     static final class Entry {
         final String path;
         final String name;
@@ -216,7 +218,14 @@ final class CommonsFtpClient implements Closeable {
             if (isUserDirName(dir)) throw new IOException("missing-user");
             return;
         }
-        FTPFile[] listed = listCurrent();
+        FTPFile[] listed;
+        try {
+            listed = listCurrent();
+        } catch (IOException fail) {
+            if (isUserDirName(dir) || "/".equals(dir)) throw fail;
+            Log.w(TAG, "LIST skip " + dir + ": " + fail.getMessage());
+            return;
+        }
         List<String> subdirs = new ArrayList<>();
         String prefix = dir.endsWith("/") ? dir : dir + "/";
         for (FTPFile file : listed) {

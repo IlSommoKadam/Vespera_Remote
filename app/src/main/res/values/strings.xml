@@ -234,6 +234,8 @@
     <string name="status_tab_field_storage">Foto interne</string>
     <string name="status_tab_field_disk">Hard disk</string>
     <string name="status_tab_storage_full">%1$s — sync (≥80%%)</string>
+    <string name="status_tab_storage_checking">controllo FTP…</string>
+    <string name="status_tab_storage_ftp_fail">FTP: %1$s</string>
     <string name="status_tab_field_battery">Batteria</string>
     <string name="status_tab_field_raw">JSON</string>
     <string name="status_tab_yes">sì</string>
