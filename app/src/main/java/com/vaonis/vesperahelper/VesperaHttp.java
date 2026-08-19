@@ -11,6 +11,7 @@ import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Minimal HTTP/1.0 over {@link VesperaSockets}. Avoids {@code Network.openConnection},
@@ -29,6 +30,15 @@ final class VesperaHttp {
     }
 
     private VesperaHttp() {}
+
+    interface UploadProgress {
+        /**
+         * Called from the upload thread.
+         * @param sent bytes already written
+         * @param total total bytes of the file (not counting multipart overhead)
+         */
+        void onProgress(long sent, long total);
+    }
 
     static Response get(Network network, String host, int port, String path, int timeoutMs)
             throws IOException {
@@ -121,6 +131,98 @@ final class VesperaHttp {
             }
             return readResponse(socket.getInputStream());
         } finally {
+            try {
+                socket.close();
+            } catch (IOException ignored) {
+            }
+        }
+    }
+
+    /**
+     * Multipart upload of a single SWU-like binary using socket streaming.
+     *
+     * Uses HTTP/1.0 + Content-Length (no chunked) so the peer can read reliably.
+     */
+    static Response postMultipartFile(Network network, String host, int port, String path,
+            String filename, String mimeType, long fileSize, InputStream in,
+            String authorization, UploadProgress progress, int timeoutMs) throws IOException {
+        if (host == null || host.isEmpty()) host = "10.0.0.1";
+        if (path == null || path.isEmpty()) path = "/";
+        if (!path.startsWith("/")) path = "/" + path;
+        if (filename == null) filename = "update.swu";
+        if (mimeType == null || mimeType.isEmpty()) mimeType = "application/octet-stream";
+        if (in == null) throw new IllegalArgumentException("in");
+
+        final String boundary = "----VesperaBoundary" + System.currentTimeMillis();
+        byte[] prefix = (
+                "--" + boundary + "\r\n"
+                        + "Content-Disposition: form-data; name=\"file\"; filename=\""
+                        + filename + "\"\r\n"
+                        + "Content-Type: " + mimeType + "\r\n\r\n"
+        ).getBytes(StandardCharsets.US_ASCII);
+        byte[] suffix = ("\r\n--" + boundary + "--\r\n")
+                .getBytes(StandardCharsets.US_ASCII);
+
+        long totalLen = (long) prefix.length + fileSize + suffix.length;
+
+        Socket socket = VesperaSockets.create(network);
+        AtomicBoolean done = new AtomicBoolean(false);
+        Thread timeoutCloser = new Thread(() -> {
+            try {
+                Thread.sleep(timeoutMs);
+            } catch (InterruptedException ignored) {
+            }
+            if (!done.get()) {
+                try {
+                    socket.close();
+                } catch (IOException ignored) {
+                }
+            }
+        }, "fw-upload-timeout-closer");
+        timeoutCloser.setDaemon(true);
+        timeoutCloser.start();
+        try {
+            socket.connect(new InetSocketAddress(host, port), timeoutMs);
+            socket.setSoTimeout(timeoutMs);
+            socket.setTcpNoDelay(true);
+            OutputStream out = socket.getOutputStream();
+
+            StringBuilder head = new StringBuilder();
+            head.append("POST ").append(path).append(" HTTP/1.0\r\n");
+            head.append("Host: ").append(host).append(':').append(port).append("\r\n");
+            head.append("Accept: application/json, */*\r\n");
+            head.append("Connection: close\r\n");
+            if (authorization != null && !authorization.isEmpty()) {
+                head.append("Authorization: ").append(authorization).append("\r\n");
+            }
+            head.append("Content-Type: multipart/form-data; boundary=").append(boundary)
+                    .append("\r\n");
+            head.append("Content-Length: ").append(totalLen).append("\r\n");
+            head.append("\r\n");
+            out.write(head.toString().getBytes(StandardCharsets.US_ASCII));
+            out.write(prefix);
+
+            byte[] buf = new byte[64 * 1024];
+            long sent = 0;
+            try (InputStream upload = in) {
+                int n;
+                while ((n = upload.read(buf)) >= 0) {
+                    if (n == 0) continue;
+                    out.write(buf, 0, n);
+                    sent += n;
+                    if (progress != null) progress.onProgress(sent, fileSize);
+                }
+            }
+
+            out.write(suffix);
+            out.flush();
+            Response response = readResponse(socket.getInputStream());
+            done.set(true);
+            timeoutCloser.interrupt();
+            return response;
+        } finally {
+            done.set(true);
+            timeoutCloser.interrupt();
             try {
                 socket.close();
             } catch (IOException ignored) {

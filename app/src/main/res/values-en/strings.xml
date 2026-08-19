@@ -162,6 +162,7 @@
     <string name="telescope_btn_resume">Resume observation</string>
     <string name="telescope_btn_init">Initialize</string>
     <string name="telescope_btn_shutdown">Power off telescope</string>
+    <string name="telescope_btn_upload_swu_expert">Load FW (SWU) - Expert</string>
     <string name="telescope_command_running">Sending command…</string>
     <string name="telescope_command_ok">%1$s: OK — %2$s</string>
     <string name="telescope_command_fail">%1$s: error — %2$s</string>
@@ -179,6 +180,20 @@
     <string name="telescope_confirm_ok">Confirm</string>
     <string name="telescope_confirm_generic">Run this command?</string>
     <string name="telescope_confirm_refresh">Refresh telescope status?</string>
+    <string name="telescope_swu_pick_missing_dir">External folder is not available.</string>
+    <string name="telescope_swu_pick_missing">No `vespera-*.swu` found in the app `files/` folder. Copy the SWU to the Pi and retry.</string>
+    <string name="telescope_swu_pick_title">Select Vespera firmware (.swu)</string>
+    <string name="telescope_swu_confirm_title">Update firmware (danger)</string>
+    <string name="telescope_swu_confirm_message">Update the instrument with `{ %1$s }`?\n\nUse only a correct Vespera file. Wrong updates may leave the instrument unusable.</string>
+    <string name="telescope_swu_running">Uploading firmware (SWU)…</string>
+    <string name="telescope_swu_no_status">Instrument status is not available.</string>
+    <string name="telescope_swu_block_observing">Blocked: the instrument is observing/acquiring.</string>
+    <string name="telescope_swu_block_battery">Blocked: battery is low (use mains power or >= 50%%).</string>
+    <string name="telescope_swu_invalid_magic">Invalid SWU file (CPIO magic not recognized).</string>
+    <string name="telescope_swu_invalid_name">Invalid filename: need `vespera-*.swu`.</string>
+    <string name="telescope_swu_progress">Upload SWU: %1$d%% (%2$d / %3$d)</string>
+    <string name="telescope_swu_ok">Upload completed. Waiting for install/reboot…</string>
+    <string name="telescope_swu_fail">Upload failed (%1$d): %2$s</string>
     <string name="telescope_confirm_park">Close the arm and park the telescope?</string>
     <string name="telescope_confirm_stop">Stop the current observation?</string>
     <string name="telescope_confirm_resume">Resume observation using the last target from status?</string>

@@ -162,6 +162,7 @@
     <string name="telescope_btn_resume">Riprendi osservazione</string>
     <string name="telescope_btn_init">Inizializza</string>
     <string name="telescope_btn_shutdown">Spegni telescopio</string>
+    <string name="telescope_btn_upload_swu_expert">Carica FW (SWU) - Esperto</string>
     <string name="telescope_command_running">Comando in invio…</string>
     <string name="telescope_command_ok">%1$s: OK — %2$s</string>
     <string name="telescope_command_fail">%1$s: errore — %2$s</string>
@@ -179,6 +180,20 @@
     <string name="telescope_confirm_ok">Conferma</string>
     <string name="telescope_confirm_generic">Eseguire questo comando?</string>
     <string name="telescope_confirm_refresh">Aggiornare lo stato del telescopio?</string>
+    <string name="telescope_swu_pick_missing_dir">Cartella esterna non disponibile.</string>
+    <string name="telescope_swu_pick_missing">Nessun file `vespera-*.swu` trovato in `files/` dell’app. Carica il file sul Pi e riprova.</string>
+    <string name="telescope_swu_pick_title">Seleziona firmware Vespera (.swu)</string>
+    <string name="telescope_swu_confirm_title">Aggiorna firmware (pericolo)</string>
+    <string name="telescope_swu_confirm_message">Aggiornare lo strumento con `{ %1$s }`?\n\nUsa solo un file Vespera corretto. Un errore può lasciare lo strumento in stato non funzionante.</string>
+    <string name="telescope_swu_running">Caricamento firmware (SWU)…</string>
+    <string name="telescope_swu_no_status">Status strumento non disponibile.</string>
+    <string name="telescope_swu_block_observing">Aggiornamento bloccato: lo strumento sta osservando/acquisendo.</string>
+    <string name="telescope_swu_block_battery">Aggiornamento bloccato: batteria bassa (serve rete elettrica o >= 50%%).</string>
+    <string name="telescope_swu_invalid_magic">File SWU non valido (magic CPIO non riconosciuta).</string>
+    <string name="telescope_swu_invalid_name">Nome file non valido: serve `vespera-*.swu`.</string>
+    <string name="telescope_swu_progress">Upload SWU: %1$d%% (%2$d / %3$d)</string>
+    <string name="telescope_swu_ok">Upload SWU completato. Attendi eventuale installazione/riavvio…</string>
+    <string name="telescope_swu_fail">Upload SWU fallito (%1$d): %2$s</string>
     <string name="telescope_confirm_park">Chiudere il braccio e parcheggiare il telescopio?</string>
     <string name="telescope_confirm_stop">Fermare l’osservazione in corso?</string>
     <string name="telescope_confirm_resume">Riprendere l’osservazione con l’ultimo target visto nello stato?</string>

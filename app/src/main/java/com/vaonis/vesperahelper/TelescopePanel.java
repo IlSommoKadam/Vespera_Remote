@@ -15,12 +15,18 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.text.DateFormat;
 import java.util.Date;
+import java.util.ArrayList;
 import java.util.Locale;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** Tab Telescopio: stato live Socket.IO 8083 + comandi REST 8082. */
 final class TelescopePanel {
@@ -40,9 +46,11 @@ final class TelescopePanel {
     private final Button cmdResume;
     private final Button cmdInit;
     private final Button cmdShutdown;
+    private final Button cmdUploadSwu;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final ExecutorService storageWorker = Executors.newSingleThreadExecutor();
+    private final ExecutorService updateWorker = Executors.newSingleThreadExecutor();
     private final ExecutorService liveWorker = Executors.newSingleThreadExecutor();
     private final AtomicBoolean fetchInFlight = new AtomicBoolean(false);
     private final AtomicBoolean commandInFlight = new AtomicBoolean(false);
@@ -114,6 +122,8 @@ final class TelescopePanel {
         cmdInit.setOnClickListener(v -> confirmCommand(VesperaCommandClient.Command.INIT));
         cmdShutdown = action(activity.getString(R.string.telescope_btn_shutdown), UiStyle.ROSE);
         cmdShutdown.setOnClickListener(v -> confirmShutdown());
+        cmdUploadSwu = action(activity.getString(R.string.telescope_btn_upload_swu_expert), UiStyle.INK);
+        cmdUploadSwu.setOnClickListener(v -> promptUploadSwu());
         LinearLayout.LayoutParams shutdownLp =
                 (LinearLayout.LayoutParams) cmdShutdown.getLayoutParams();
         shutdownLp.topMargin = (int) (8 * density);
@@ -125,6 +135,7 @@ final class TelescopePanel {
         layout.addView(cmdResume);
         layout.addView(cmdInit);
         layout.addView(cmdShutdown);
+        layout.addView(cmdUploadSwu);
         layout.addView(commandResult);
         layout.addView(section(activity.getString(R.string.telescope_section_ports)));
         portInventory = body(activity.getString(R.string.port_inventory_idle));
@@ -206,6 +217,7 @@ final class TelescopePanel {
         mainHandler.removeCallbacks(autoRefresh);
         worker.shutdownNow();
         storageWorker.shutdownNow();
+        updateWorker.shutdownNow();
         liveWorker.shutdownNow();
         dismissPowerWarning(false);
     }
@@ -634,6 +646,7 @@ final class TelescopePanel {
         cmdResume.setEnabled(on);
         cmdInit.setEnabled(on);
         cmdShutdown.setEnabled(on);
+        cmdUploadSwu.setEnabled(on);
     }
 
     private void updateObservationButtons(boolean observing) {
@@ -664,6 +677,150 @@ final class TelescopePanel {
         confirmAction(activity.getString(R.string.telescope_shutdown_title),
                 activity.getString(R.string.telescope_shutdown_message),
                 () -> runCommand(VesperaCommandClient.Command.SHUTDOWN));
+    }
+
+    private void promptUploadSwu() {
+        if (!isConnected()) {
+            commandResult.setText(activity.getString(R.string.status_tab_need_wifi));
+            return;
+        }
+        File dir = activity.getExternalFilesDir(null);
+        if (dir == null) dir = activity.getFilesDir();
+        if (dir == null) {
+            commandResult.setText(activity.getString(R.string.telescope_swu_pick_missing_dir));
+            return;
+        }
+        ArrayList<File> candidates = new ArrayList<>();
+        File[] listed = dir.listFiles();
+        if (listed != null) {
+            for (File f : listed) {
+                if (f == null) continue;
+                String n = f.getName();
+                if (!f.isFile()) continue;
+                String lower = n.toLowerCase(Locale.US);
+                if (lower.startsWith("vespera-") && lower.endsWith(".swu")) {
+                    candidates.add(f);
+                }
+            }
+        }
+        if (candidates.isEmpty()) {
+            commandResult.setText(activity.getString(R.string.telescope_swu_pick_missing));
+            return;
+        }
+        String[] names = new String[candidates.size()];
+        for (int i = 0; i < candidates.size(); i++) names[i] = candidates.get(i).getName();
+        final int x = scroll.getScrollX();
+        final int y = scroll.getScrollY();
+        AlertDialog dialog = new AlertDialog.Builder(activity)
+                .setTitle(activity.getString(R.string.telescope_swu_pick_title))
+                .setItems(names, (d, which) -> {
+                    scroll.restoreTo(x, y);
+                    File chosen = candidates.get(which);
+                    confirmAction(activity.getString(R.string.telescope_swu_confirm_title),
+                            activity.getString(R.string.telescope_swu_confirm_message,
+                                    chosen == null ? "" : chosen.getName()),
+                            () -> {
+                                scroll.restoreTo(x, y);
+                                if (chosen != null) runSwuUpload(chosen);
+                            });
+                })
+                .create();
+        dialog.setOnDismissListener(d -> scroll.restoreTo(x, y));
+        dialog.show();
+    }
+
+    private void runSwuUpload(File swuFile) {
+        if (swuFile == null) return;
+        if (!commandInFlight.compareAndSet(false, true)) return;
+        setCommandsEnabled(false);
+
+        commandResult.setText(activity.getString(R.string.telescope_swu_running));
+        final VesperaStatusSnapshot snap = lastSnap;
+        final File file = swuFile;
+
+        updateWorker.execute(() -> {
+            boolean ok = false;
+            String message;
+            try {
+                if (!isConnected()) {
+                    message = activity.getString(R.string.status_tab_need_wifi);
+                } else if (snap == null) {
+                    message = activity.getString(R.string.telescope_swu_no_status);
+                } else if (!snap.canSignCommands()) {
+                    message = activity.getString(R.string.telescope_command_auth_missing);
+                } else if (snap.isObserving() || snap.isTrackingAcquisition()) {
+                    message = activity.getString(R.string.telescope_swu_block_observing);
+                } else if (!snap.isOnMainsPower() && snap.batteryPercent >= 0
+                        && snap.batteryPercent < 50) {
+                    message = activity.getString(R.string.telescope_swu_block_battery);
+                } else if (!validateSdpMagic(file)) {
+                    message = activity.getString(R.string.telescope_swu_invalid_magic);
+                } else if (!file.getName().toLowerCase(Locale.US).startsWith("vespera-")
+                        || !file.getName().toLowerCase(Locale.US).endsWith(".swu")) {
+                    message = activity.getString(R.string.telescope_swu_invalid_name);
+                } else {
+                    VesperaFirmwareUpdateClient.Result r =
+                            VesperaFirmwareUpdateClient.uploadSwu(
+                                    VesperaConnectionService.getActiveNetwork(),
+                                    host,
+                                    resolveApiPort(),
+                                    snap,
+                                    file,
+                                    createSwuProgressCallback());
+                    ok = r.success;
+                    message = ok ? activity.getString(R.string.telescope_swu_ok)
+                            : activity.getString(R.string.telescope_swu_fail,
+                            r.httpCode, r.message == null ? "" : r.message);
+                }
+            } catch (Exception e) {
+                message = e.getMessage() == null ? e.toString() : e.getMessage();
+            }
+            final String msg = message;
+            final boolean okFinal = ok;
+            mainHandler.post(() -> {
+                scroll.pin();
+                commandInFlight.set(false);
+                setCommandsEnabled(true);
+                commandResult.setText(msg);
+                if (okFinal && visible) {
+                    // Firmware updates usually reboot the instrument; status refresh
+                    // will recover when the connection state changes.
+                    refreshStatusNow(false);
+                }
+            });
+        });
+    }
+
+    private boolean validateSdpMagic(File file) {
+        if (file == null || file.length() <= 0) return false;
+        try (FileInputStream in = new FileInputStream(file)) {
+            byte[] head = new byte[6];
+            int n = in.read(head);
+            if (n < 6) return false;
+            String prefix = new String(head, StandardCharsets.US_ASCII);
+            return "070701".equals(prefix) || "070702".equals(prefix);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private VesperaFirmwareUpdateClient.Progress createSwuProgressCallback() {
+        final AtomicLong lastUiAt = new AtomicLong(0);
+        return (sent, total) -> {
+            long now = System.currentTimeMillis();
+            long prev = lastUiAt.get();
+            if (now - prev < 700) return;
+            if (!lastUiAt.compareAndSet(prev, now)) return;
+            mainHandler.post(() -> {
+                if (!visible) return;
+                int permille = total > 0
+                        ? (int) Math.max(0, Math.min(1000, (sent * 1000) / total))
+                        : 0;
+                commandResult.setText(activity.getString(
+                        R.string.telescope_swu_progress,
+                        permille / 10, sent, total));
+            });
+        };
     }
 
     private int confirmMessage(VesperaCommandClient.Command command) {

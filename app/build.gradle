@@ -26,7 +26,7 @@ android {
         applicationId 'com.vaonis.vesperahelper'
         minSdk 29
         targetSdk 35
-        versionCode 110
+        versionCode 111
         versionName '0.6.64'
         buildConfigField 'String', 'VESPERA_ED25519_PUBLIC_B64',
                 '"' + ed25519PublicB64.replace('\\', '\\\\').replace('"', '\\"') + '"'
