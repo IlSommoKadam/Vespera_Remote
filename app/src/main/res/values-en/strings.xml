@@ -165,6 +165,7 @@
     <string name="telescope_command_running">Sending command…</string>
     <string name="telescope_command_ok">%1$s: OK — %2$s</string>
     <string name="telescope_command_fail">%1$s: error — %2$s</string>
+    <string name="telescope_command_shutdown_ok">Power off telescope: OK — shutdown in progress, Wi‑Fi will drop.</string>
     <string name="telescope_command_auth">Telescope rejected the Ed25519 signature (HTTP 401).</string>
     <string name="telescope_command_auth_missing">Status has no challenge or telescope ID: cannot sign the command.</string>
     <string name="telescope_command_auth_missing_challenge">Status has no challenge: cannot sign the command.</string>

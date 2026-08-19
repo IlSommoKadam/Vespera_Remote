@@ -38,7 +38,7 @@ final class PhotoPanel {
     private final float density;
     private final UsbDiskStore diskStore;
     private final PhotoSyncStore syncStore;
-    private final ScrollView scroll;
+    private final FixedScrollView scroll;
     private final TextView hdStatus;
     private final TextView hdSpaceView;
     private final TextView savedLabel;
@@ -88,9 +88,7 @@ final class PhotoPanel {
         this.syncStore = PhotoSyncStore.from(activity);
         this.selectedId = diskStore.getId();
 
-        scroll = new ScrollView(activity);
-        scroll.setFillViewport(true);
-        scroll.setClipToPadding(false);
+        scroll = new FixedScrollView(activity);
         scroll.setLayoutParams(new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
@@ -417,6 +415,7 @@ final class PhotoPanel {
     private final BroadcastReceiver statusReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (intent == null) return;
+            scroll.pin();
             if (PhotoSyncService.ACTION_PROGRESS.equals(intent.getAction())) {
                 boolean syncing = intent.hasExtra(PhotoSyncService.EXTRA_SYNCING)
                         ? intent.getBooleanExtra(PhotoSyncService.EXTRA_SYNCING, false)
@@ -492,6 +491,10 @@ final class PhotoPanel {
 
     private void bindDisks(List<UsbDisk> disks) {
         listedCount = disks.size();
+        scroll.runKeepingScroll(() -> bindDisksLocked(disks));
+    }
+
+    private void bindDisksLocked(List<UsbDisk> disks) {
         diskList.removeAllViews();
         if (disks.isEmpty()) {
             TextView empty = body(lastMessage != null && !lastMessage.isEmpty()
@@ -569,6 +572,7 @@ final class PhotoPanel {
     }
 
     private void applyInterval() {
+        scroll.pin();
         float dayHours = PhotoSyncStore.parseIntervalHours(dayIntervalInput.getText().toString());
         float nightHours = PhotoSyncStore.parseIntervalHours(nightIntervalInput.getText().toString());
         int dayStart = parseHour(dayStartHourInput.getText().toString(), syncStore.dayStartHour());
@@ -596,7 +600,7 @@ final class PhotoPanel {
     private void searchCity() {
         hideKeyboard(cityInput);
         final String query = cityInput.getText() == null ? "" : cityInput.getText().toString().trim();
-        cityResults.removeAllViews();
+        scroll.runKeepingScroll(() -> cityResults.removeAllViews());
         if (query.length() < 2) {
             locationStatus.setText(R.string.photo_sync_city_none);
             return;
@@ -614,34 +618,38 @@ final class PhotoPanel {
             } catch (Exception failure) {
                 mainHandler.post(() -> {
                     citySearch.setEnabled(true);
-                    cityResults.removeAllViews();
-                    locationStatus.setText(R.string.photo_sync_city_error);
+                    scroll.runKeepingScroll(() -> {
+                        cityResults.removeAllViews();
+                        locationStatus.setText(R.string.photo_sync_city_error);
+                    });
                 });
             }
         });
     }
 
     private void bindCityHits(List<CityGeocoder.Hit> hits) {
-        cityResults.removeAllViews();
-        if (hits == null || hits.isEmpty()) {
-            locationStatus.setText(R.string.photo_sync_city_none);
-            return;
-        }
-        locationStatus.setText(locationText());
-        for (CityGeocoder.Hit hit : hits) {
-            Button row = new Button(activity);
-            row.setAllCaps(false);
-            row.setGravity(android.view.Gravity.START | android.view.Gravity.CENTER_VERTICAL);
-            row.setText(hit.label);
-            UiStyle.applyRaised(row, UiStyle.SLATE, true);
-            row.setOnClickListener(v -> applySite(hit.lat, hit.lon, hit.label,
-                    PhotoSyncStore.SITE_CITY, hit.countryCode));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            lp.bottomMargin = (int) (4 * density);
-            row.setLayoutParams(lp);
-            cityResults.addView(row);
-        }
+        scroll.runKeepingScroll(() -> {
+            cityResults.removeAllViews();
+            if (hits == null || hits.isEmpty()) {
+                locationStatus.setText(R.string.photo_sync_city_none);
+                return;
+            }
+            locationStatus.setText(locationText());
+            for (CityGeocoder.Hit hit : hits) {
+                Button row = new Button(activity);
+                row.setAllCaps(false);
+                row.setGravity(android.view.Gravity.START | android.view.Gravity.CENTER_VERTICAL);
+                row.setText(hit.label);
+                UiStyle.applyRaised(row, UiStyle.SLATE, true);
+                row.setOnClickListener(v -> applySite(hit.lat, hit.lon, hit.label,
+                        PhotoSyncStore.SITE_CITY, hit.countryCode));
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                lp.bottomMargin = (int) (4 * density);
+                row.setLayoutParams(lp);
+                cityResults.addView(row);
+            }
+        });
     }
 
     private void fetchVesperaSite() {
@@ -672,6 +680,7 @@ final class PhotoPanel {
         geoWorker.execute(() -> {
             syncStore.setSite(lat, lon, label, source, countryCode);
             mainHandler.post(() -> {
+                scroll.pin();
                 cityResults.removeAllViews();
                 if (PhotoSyncStore.SITE_CITY.equals(source)) {
                     cityInput.setText(label);
@@ -785,6 +794,9 @@ final class PhotoPanel {
                 })
                 .create();
         diskDialog = dialog;
+        final int x = scroll.getScrollX();
+        final int y = scroll.getScrollY();
+        dialog.setOnDismissListener(d -> scroll.restoreTo(x, y));
         dialog.show();
     }
 

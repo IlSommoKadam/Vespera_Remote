@@ -8,6 +8,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
@@ -41,9 +42,14 @@ final class VesperaHttp {
 
     static Response post(Network network, String host, int port, String path, String jsonBody,
             String authorization, int timeoutMs) throws IOException {
+        return post(network, host, port, path, jsonBody, authorization, timeoutMs, false);
+    }
+
+    static Response post(Network network, String host, int port, String path, String jsonBody,
+            String authorization, int timeoutMs, boolean acceptHangup) throws IOException {
         byte[] body = (jsonBody == null ? "{}" : jsonBody).getBytes(StandardCharsets.UTF_8);
         return request(network, host, port, "POST", path, "application/json", body,
-                authorization, null, timeoutMs);
+                authorization, null, timeoutMs, acceptHangup);
     }
 
     static Response postPlain(Network network, String host, int port, String path, String body,
@@ -65,6 +71,14 @@ final class VesperaHttp {
     private static Response request(Network network, String host, int port, String method,
             String path, String contentType, byte[] body, String authorization, String cookie,
             int timeoutMs)
+            throws IOException {
+        return request(network, host, port, method, path, contentType, body, authorization,
+                cookie, timeoutMs, false);
+    }
+
+    private static Response request(Network network, String host, int port, String method,
+            String path, String contentType, byte[] body, String authorization, String cookie,
+            int timeoutMs, boolean acceptHangup)
             throws IOException {
         if (host == null || host.isEmpty()) host = "10.0.0.1";
         if (path == null || path.isEmpty()) path = "/";
@@ -95,6 +109,16 @@ final class VesperaHttp {
             out.write(head.toString().getBytes(StandardCharsets.US_ASCII));
             if (body != null && body.length > 0) out.write(body);
             out.flush();
+            if (acceptHangup) {
+                int readMs = Math.min(timeoutMs, 2_500);
+                socket.setSoTimeout(Math.max(500, readMs));
+                try {
+                    return readResponse(socket.getInputStream());
+                } catch (IOException hangup) {
+                    if (isHangup(hangup)) return new Response(0, "");
+                    throw hangup;
+                }
+            }
             return readResponse(socket.getInputStream());
         } finally {
             try {
@@ -126,6 +150,22 @@ final class VesperaHttp {
             body = body.substring(0, contentLength);
         }
         return new Response(code, body);
+    }
+
+    static boolean isHangup(Exception failure) {
+        if (failure == null) return false;
+        if (failure instanceof SocketTimeoutException) return true;
+        String msg = failure.getMessage();
+        if (msg == null) msg = failure.getClass().getSimpleName();
+        String lower = msg.toLowerCase(Locale.US);
+        return lower.contains("timed out")
+                || lower.contains("timeout")
+                || lower.contains("reset")
+                || lower.contains("broken pipe")
+                || lower.contains("connection abort")
+                || lower.contains("empty http")
+                || lower.contains("econnreset")
+                || lower.contains("etimedout");
     }
 
     private static int headerSplit(String text) {

@@ -78,8 +78,12 @@ final class VesperaCommandClient {
         Result last = new Result(false, -1, "HTTP");
         try {
             for (String path : paths) {
+                boolean shutdown = command == Command.SHUTDOWN;
                 VesperaHttp.Response response = VesperaHttp.post(
-                        network, host, port, path, body, authorization, TIMEOUT_MS);
+                        network, host, port, path, body, authorization, TIMEOUT_MS, shutdown);
+                if (shutdown && response.code == 0) {
+                    return new Result(true, 0, "shutdown_started");
+                }
                 boolean ok = response.code >= 200 && response.code < 300;
                 if (!ok && response.code == 401) {
                     return new Result(false, response.code, "auth_required");
@@ -87,7 +91,10 @@ final class VesperaCommandClient {
                 String msg = response.body.isEmpty()
                         ? ("HTTP " + response.code) : truncate(response.body, 200);
                 last = new Result(ok, response.code, msg);
-                if (ok) return last;
+                if (ok) {
+                    if (shutdown) return new Result(true, response.code, "shutdown_started");
+                    return last;
+                }
                 if (response.code != 404 && response.code != 405) return last;
             }
             if (command == Command.RESUME && !haveTarget) {
@@ -97,6 +104,9 @@ final class VesperaCommandClient {
             return last;
         } catch (Exception failure) {
             Log.w(TAG, command.path + ": " + failure.getMessage());
+            if (command == Command.SHUTDOWN && VesperaHttp.isHangup(failure)) {
+                return new Result(true, 0, "shutdown_started");
+            }
             return new Result(false, -1, failure.getMessage());
         }
     }

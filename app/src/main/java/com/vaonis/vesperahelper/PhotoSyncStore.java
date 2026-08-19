@@ -2,6 +2,7 @@ package com.vaonis.vesperahelper;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.SystemClock;
 
 import java.io.File;
 import java.util.Calendar;
@@ -47,6 +48,7 @@ final class PhotoSyncStore {
     private static final String KEY_AUTO_HOURS = "auto_hours";
     private static final String KEY_SUN_DAY = "sun_day";
     private static final String KEY_LAST_NTP = "last_ntp_at";
+    private static final String KEY_LAST_NTP_ELAPSED = "last_ntp_elapsed";
     private static final String KEY_NTP_OK = "last_ntp_ok";
     static final String SITE_CITY = "city";
     static final String SITE_VESPERA = "vespera";
@@ -129,19 +131,34 @@ final class PhotoSyncStore {
                 .putBoolean(KEY_AUTO_HOURS, true)
                 .putInt(KEY_SUN_DAY, -1)
                 .putLong(KEY_LAST_NTP, 0)
+                .putLong(KEY_LAST_NTP_ELAPSED, 0)
                 .commit();
     }
 
     boolean clockSyncDue(long nowMs, long intervalMs) {
         long last = prefs.getLong(KEY_LAST_NTP, 0);
         if (last <= 0) return true;
-        if (nowMs - last >= intervalMs) return true;
+        long delta = nowMs - last;
+        if (delta >= intervalMs) return true;
+        if (delta < 0) return false;
         Calendar now = Calendar.getInstance(zone());
         now.setTimeInMillis(nowMs);
         Calendar then = Calendar.getInstance(zone());
         then.setTimeInMillis(last);
         return now.get(Calendar.DAY_OF_YEAR) != then.get(Calendar.DAY_OF_YEAR)
                 || now.get(Calendar.YEAR) != then.get(Calendar.YEAR);
+    }
+
+    /**
+     * True if an NTP attempt already ran recently. Uses {@link SystemClock#elapsedRealtime()}
+     * so a wall-clock jump during set-clock cannot retrigger the sync.
+     */
+    boolean clockSyncedRecently(long minGapMs) {
+        long lastElapsed = prefs.getLong(KEY_LAST_NTP_ELAPSED, 0);
+        if (lastElapsed <= 0) return false;
+        long nowElapsed = SystemClock.elapsedRealtime();
+        if (nowElapsed < lastElapsed) return false;
+        return nowElapsed - lastElapsed < minGapMs;
     }
 
     boolean lastNtpOk() { return prefs.getBoolean(KEY_NTP_OK, false); }
@@ -188,7 +205,11 @@ final class PhotoSyncStore {
     }
 
     void recordClockSync(long nowMs, boolean ok) {
-        prefs.edit().putLong(KEY_LAST_NTP, nowMs).putBoolean(KEY_NTP_OK, ok).commit();
+        prefs.edit()
+                .putLong(KEY_LAST_NTP, nowMs)
+                .putLong(KEY_LAST_NTP_ELAPSED, SystemClock.elapsedRealtime())
+                .putBoolean(KEY_NTP_OK, ok)
+                .commit();
     }
 
     /** Recompute day/night hours from today's sunrise/sunset in the site timezone. */

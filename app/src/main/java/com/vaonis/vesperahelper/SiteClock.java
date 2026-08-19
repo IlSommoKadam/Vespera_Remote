@@ -49,7 +49,9 @@ final class SiteClock {
         boolean ntpOk = false;
         boolean ntpAttempted = false;
         long ntpMs = now;
-        if (forceNtp || store.clockSyncDue(now, INTERVAL_MS)) {
+        boolean due = forceNtp
+                || (!store.clockSyncedRecently(INTERVAL_MS) && store.clockSyncDue(now, INTERVAL_MS));
+        if (due) {
             ntpAttempted = true;
             try {
                 ntpMs = NtpClient.unixTimeMs();

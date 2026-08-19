@@ -29,7 +29,7 @@ final class TelescopePanel {
 
     private final Activity activity;
     private final float density;
-    private final ScrollView scroll;
+    private final FixedScrollView scroll;
     private final LinearLayout statusBox;
     private final TextView commandResult;
     private final TextView lastUpdate;
@@ -67,9 +67,7 @@ final class TelescopePanel {
         this.activity = activity;
         this.density = density;
 
-        scroll = new ScrollView(activity);
-        scroll.setFillViewport(true);
-        scroll.setClipToPadding(false);
+        scroll = new FixedScrollView(activity);
         scroll.setVisibility(View.GONE);
         scroll.setLayoutParams(new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -97,7 +95,6 @@ final class TelescopePanel {
         refreshStatus = action(activity.getString(R.string.telescope_btn_refresh_status),
                 UiStyle.SLATE);
         refreshStatus.setOnClickListener(v -> confirmRefresh());
-        scroll.setDescendantFocusability(LinearLayout.FOCUS_BEFORE_DESCENDANTS);
 
         layout.addView(statusBox);
         layout.addView(lastUpdate);
@@ -283,6 +280,7 @@ final class TelescopePanel {
         setStatusSnapshot(snapshot,
                 activity.getString(R.string.status_tab_last_update, when)
                         + " · " + activity.getString(R.string.status_tab_live));
+        scroll.pin();
         maybeShowPowerWarning(snapshot);
         updateObservationButtons(snapshot.isObserving());
     }
@@ -313,6 +311,7 @@ final class TelescopePanel {
                 fetchInFlight.set(false);
                 refreshStatus.setEnabled(isConnected());
                 if (!visible) return;
+                scroll.pin();
                 String when = DateFormat.getTimeInstance(DateFormat.MEDIUM, Locale.getDefault())
                         .format(new Date());
                 if (result.snapshot == null) {
@@ -339,20 +338,18 @@ final class TelescopePanel {
 
     private void refillStatusKeepingScroll() {
         if (!visible || lastSnap == null) return;
-        final int x = scroll.getScrollX();
-        final int y = scroll.getScrollY();
-        statusBox.removeAllViews();
-        fillStatusRows(lastSnap);
-        scroll.post(() -> scroll.scrollTo(x, y));
+        scroll.runKeepingScroll(() -> {
+            statusBox.removeAllViews();
+            fillStatusRows(lastSnap);
+        });
     }
 
     private void setStatusMessage(String status, String updated) {
-        final int x = scroll.getScrollX();
-        final int y = scroll.getScrollY();
-        statusBox.removeAllViews();
-        addStatusMessage(status == null ? "—" : status);
-        if (updated != null) lastUpdate.setText(updated);
-        scroll.post(() -> scroll.scrollTo(x, y));
+        scroll.runKeepingScroll(() -> {
+            statusBox.removeAllViews();
+            addStatusMessage(status == null ? "—" : status);
+            if (updated != null) lastUpdate.setText(updated);
+        });
     }
 
     private void fillStatusRows(VesperaStatusSnapshot snap) {
@@ -571,17 +568,25 @@ final class TelescopePanel {
             VesperaCommandClient.Result result = VesperaCommandClient.send(
                     fetchHost, fetchPort, network, command);
             mainHandler.post(() -> {
+                scroll.pin();
                 commandInFlight.set(false);
                 setCommandsEnabled(true);
                 if (result.success) {
-                    commandResult.setText(activity.getString(
-                            R.string.telescope_command_ok, label(command), result.message));
+                    if (command == VesperaCommandClient.Command.SHUTDOWN) {
+                        commandResult.setText(activity.getString(
+                                R.string.telescope_command_shutdown_ok));
+                    } else {
+                        commandResult.setText(activity.getString(
+                                R.string.telescope_command_ok, label(command), result.message));
+                    }
                     if (command == VesperaCommandClient.Command.STOP) {
                         updateObservationButtons(false);
                     } else if (command == VesperaCommandClient.Command.RESUME) {
                         updateObservationButtons(true);
                     }
-                    if (visible) refreshStatusNow(false);
+                    if (visible && command != VesperaCommandClient.Command.SHUTDOWN) {
+                        refreshStatusNow(false);
+                    }
                 } else if ("auth_required".equals(result.message)
                         || "auth_sign_failed".equals(result.message)) {
                     commandResult.setText(activity.getString(R.string.telescope_command_auth));
@@ -677,12 +682,19 @@ final class TelescopePanel {
     }
 
     private void confirmAction(String title, String message, Runnable onConfirm) {
-        new AlertDialog.Builder(activity)
+        final int x = scroll.getScrollX();
+        final int y = scroll.getScrollY();
+        AlertDialog dialog = new AlertDialog.Builder(activity)
                 .setTitle(title)
                 .setMessage(message)
-                .setPositiveButton(R.string.telescope_confirm_ok, (d, w) -> onConfirm.run())
+                .setPositiveButton(R.string.telescope_confirm_ok, (d, w) -> {
+                    scroll.restoreTo(x, y);
+                    onConfirm.run();
+                })
                 .setNegativeButton(android.R.string.cancel, null)
-                .show();
+                .create();
+        dialog.setOnDismissListener(d -> scroll.restoreTo(x, y));
+        dialog.show();
     }
 
     private String formatUnavailable(String detail) {
@@ -701,6 +713,8 @@ final class TelescopePanel {
         if (!snap.isOffMainsPower()) return;
         if (powerWarningAccepted || powerWarningIgnoredThisVisit) return;
         if (powerDialog != null && powerDialog.isShowing()) return;
+        final int x = scroll.getScrollX();
+        final int y = scroll.getScrollY();
         AlertDialog dialog = new AlertDialog.Builder(activity)
                 .setTitle(R.string.telescope_power_title)
                 .setMessage(R.string.telescope_power_message)
@@ -718,6 +732,7 @@ final class TelescopePanel {
                 })
                 .create();
         powerDialog = dialog;
+        dialog.setOnDismissListener(d -> scroll.restoreTo(x, y));
         dialog.show();
     }
 

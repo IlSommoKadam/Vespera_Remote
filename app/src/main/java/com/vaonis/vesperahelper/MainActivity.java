@@ -84,7 +84,7 @@ public final class MainActivity extends Activity {
     private Button tabPhotos;
     private Button tabTelescope;
     private Button tabSystem;
-    private ScrollView wifiScroll;
+    private FixedScrollView wifiScroll;
     private TelescopePanel telescopePanel;
     private PhotoPanel photoPanel;
     private SystemPanel systemPanel;
@@ -122,6 +122,7 @@ public final class MainActivity extends Activity {
     private boolean instrumentStatusReceiverRegistered;
     private final BroadcastReceiver connectionStatusReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
+            if (wifiScroll != null) wifiScroll.pin();
             String connectionStatus = intent.getStringExtra(VesperaConnectionService.EXTRA_STATUS);
             if (connectionStatus != null) {
                 setConnectionState(connectionStatus);
@@ -152,6 +153,7 @@ public final class MainActivity extends Activity {
     };
     private final BroadcastReceiver instrumentStatusReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
+            if (wifiScroll != null) wifiScroll.pin();
             String message = intent.getStringExtra(InstrumentWatchdog.EXTRA_MESSAGE);
             if (message == null) return;
             boolean detected = intent.getBooleanExtra(InstrumentWatchdog.EXTRA_DETECTED, false);
@@ -244,9 +246,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout tabBar = buildTabBar(density);
 
-        wifiScroll = new ScrollView(this);
-        wifiScroll.setFillViewport(true);
-        wifiScroll.setClipToPadding(false);
+        wifiScroll = new FixedScrollView(this);
         wifiScroll.setVerticalScrollBarEnabled(true);
         wifiScroll.setScrollbarFadingEnabled(false);
         wifiScroll.setLayoutParams(new LinearLayout.LayoutParams(
@@ -660,6 +660,7 @@ public final class MainActivity extends Activity {
             if (VesperaDeviceStore.isVesperaSsid(result.SSID)) found.add(result);
         }
         Collections.sort(found, Comparator.comparingInt((ScanResult r) -> r.level).reversed());
+        wifiScroll.pin();
         foundDevicesList.removeAllViews();
 
         ScanResult savedMatch = null;

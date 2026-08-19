@@ -40,12 +40,16 @@ public final class SyncProgressActivity extends Activity {
         card = SyncProgressHud.buildCard(localized, density, this::hideWindow, this::closeAndPause);
         LinearLayout wrap = new LinearLayout(this);
         wrap.setOrientation(LinearLayout.VERTICAL);
-        wrap.setGravity(Gravity.CENTER);
+        wrap.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         int pad = Math.round(12 * density);
         wrap.setPadding(pad, pad, pad, pad);
         wrap.addView(card, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         setContentView(wrap);
+        window.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        WindowManager.LayoutParams lp = window.getAttributes();
+        lp.y = Math.round(36 * density);
+        window.setAttributes(lp);
         window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT);
         if (SyncProgressHud.latest != null) {
             SyncProgressHud.bindCard(card, localized, SyncProgressHud.latest);

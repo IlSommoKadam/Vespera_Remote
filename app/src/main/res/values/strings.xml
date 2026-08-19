@@ -165,6 +165,7 @@
     <string name="telescope_command_running">Comando in invio…</string>
     <string name="telescope_command_ok">%1$s: OK — %2$s</string>
     <string name="telescope_command_fail">%1$s: errore — %2$s</string>
+    <string name="telescope_command_shutdown_ok">Spegni telescopio: OK — spegnimento in corso, il Wi‑Fi si chiuderà.</string>
     <string name="telescope_command_auth">Il telescopio ha rifiutato la firma Ed25519 (HTTP 401).</string>
     <string name="telescope_command_auth_missing">Manca challenge o ID telescopio nello status: non posso firmare il comando.</string>
     <string name="telescope_command_auth_missing_challenge">Nello status manca il challenge: non posso firmare il comando.</string>

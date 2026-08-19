@@ -259,7 +259,7 @@ public final class PhotoSyncService extends Service {
             connectionReceiverRegistered = true;
         }
         worker.execute(() -> {
-            refreshClockAndSun(true);
+            refreshClockAndSun(false);
             refreshMountStatus();
             bootstrapMountLocked();
             if (mounted) startFtpLocked();
@@ -280,7 +280,7 @@ public final class PhotoSyncService extends Service {
         if (ACTION_BOOTSTRAP.equals(action) || action == null) {
             worker.execute(() -> {
                 userUnmounted = false;
-                refreshClockAndSun(true);
+                refreshClockAndSun(false);
                 refreshMountStatus();
                 bootstrapMountLocked();
                 if (mounted) startFtpLocked();

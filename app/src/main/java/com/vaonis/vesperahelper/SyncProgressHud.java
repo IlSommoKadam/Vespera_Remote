@@ -35,6 +35,7 @@ final class SyncProgressHud {
     void show() {
         main.post(() -> {
             hiddenByUser = false;
+            if (windowShown) return;
             windowShown = true;
             startWindow();
         });
@@ -93,7 +94,6 @@ final class SyncProgressHud {
         try {
             service.startActivity(new Intent(service, SyncProgressActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                            | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                             | Intent.FLAG_ACTIVITY_SINGLE_TOP));
         } catch (Exception ignored) {
         }
@@ -173,7 +173,7 @@ final class SyncProgressHud {
         etaView.setPadding(0, Math.round(4 * density), 0, Math.round(8 * density));
         etaView.setTag("eta");
 
-        ScrollView summaryScroll = new ScrollView(context);
+        ScrollView summaryScroll = new FixedScrollView(context);
         summaryScroll.setTag("summaryScroll");
         summaryScroll.setFillViewport(true);
         summaryScroll.setVisibility(View.GONE);

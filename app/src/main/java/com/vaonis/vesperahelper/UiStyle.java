@@ -92,6 +92,8 @@ final class UiStyle {
     static void applyRaised(TextView view, int color, boolean enabled) {
         float density = view.getResources().getDisplayMetrics().density;
         view.setEnabled(enabled);
+        view.setFocusable(false);
+        view.setFocusableInTouchMode(false);
         view.setBackground(raisedButton(color, density));
         view.setTextColor(textOn(color));
         view.setStateListAnimator(null);
@@ -105,6 +107,8 @@ final class UiStyle {
 
     static void applyRecessed(TextView view, int color) {
         float density = view.getResources().getDisplayMetrics().density;
+        view.setFocusable(false);
+        view.setFocusableInTouchMode(false);
         view.setBackground(recessedStatus(color, density));
         view.setTextColor(textOn(color));
         view.setStateListAnimator(null);

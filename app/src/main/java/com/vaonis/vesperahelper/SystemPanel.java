@@ -28,7 +28,7 @@ final class SystemPanel {
     private final SystemSettingsStore settings;
     private final PhotoSyncStore syncStore;
     private final UsbHdStore hdStore;
-    private final ScrollView scroll;
+    private final FixedScrollView scroll;
     private final Row photoSync;
     private final Row storageSync;
     private final Row resumeSync;
@@ -53,9 +53,7 @@ final class SystemPanel {
         this.syncStore = PhotoSyncStore.from(activity);
         this.hdStore = UsbHdStore.from(activity);
 
-        scroll = new ScrollView(activity);
-        scroll.setFillViewport(true);
-        scroll.setClipToPadding(false);
+        scroll = new FixedScrollView(activity);
         scroll.setVisibility(View.GONE);
         scroll.setLayoutParams(new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -159,6 +157,7 @@ final class SystemPanel {
     }
 
     private void saveAll() {
+        scroll.pin();
         SystemSettingsStore.Snapshot snap = new SystemSettingsStore.Snapshot();
         snap.photoSync = photoSync.check.isChecked();
         snap.storageSync = storageSync.check.isChecked();
@@ -442,6 +441,8 @@ final class SystemPanel {
         CheckBox check = new CheckBox(activity);
         check.setText(title);
         check.setChecked(checked);
+        check.setFocusable(false);
+        check.setFocusableInTouchMode(false);
         check.setTextSize(15);
         check.setTypeface(check.getTypeface(), Typeface.BOLD);
         check.setTextColor(0xFF1A237E);
@@ -490,7 +491,10 @@ final class SystemPanel {
 
     private final BroadcastReceiver logReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            if (visible) refreshLog();
+            if (visible) {
+                scroll.pin();
+                refreshLog();
+            }
         }
     };
 
