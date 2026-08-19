@@ -3,6 +3,7 @@ package com.vaonis.vesperahelper;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
 import android.util.Log;
 
 /**
@@ -30,17 +31,28 @@ public final class BootReceiver extends BroadcastReceiver {
             Log.w(TAG, "MainActivity start failed", failure);
         }
 
-        VesperaDeviceStore device = VesperaDeviceStore.from(context);
         try {
             PhotoSyncService.start(context);
         } catch (Exception failure) {
             Log.w(TAG, "PhotoSyncService start failed", failure);
         }
+
+        VesperaDeviceStore device = VesperaDeviceStore.from(context);
         if (!device.isConfigured()) {
             Log.i(TAG, "no saved Vespera — UI only");
             return;
         }
-        VesperaConnectionService.ensure(context);
-        Log.i(TAG, "auto-connect at boot for " + device.getSsid());
+        Intent service = new Intent(context, VesperaConnectionService.class)
+                .setAction(VesperaConnectionService.ACTION_CONNECT);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(service);
+            } else {
+                context.startService(service);
+            }
+            Log.i(TAG, "started connection service for " + device.getSsid());
+        } catch (Exception failure) {
+            Log.w(TAG, "connection service start failed", failure);
+        }
     }
 }
