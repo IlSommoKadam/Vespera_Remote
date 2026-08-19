@@ -260,11 +260,17 @@ final class SyncProgressHud {
                 fileView.setText(progress.failed == 0
                         ? localized.getString(R.string.photo_sync_summary_ok)
                         : localized.getString(R.string.photo_sync_summary_partial, progress.failed));
+            } else if (SyncProgress.PHASE_LIST.equals(progress.phase)) {
+                if (progress.detail != null && !progress.detail.isEmpty()
+                        && !localized.getString(R.string.photo_sync_listing).equals(progress.detail)) {
+                    fileView.setText(localized.getString(R.string.photo_sync_listing_dir,
+                            progress.detail, progress.fileIndex));
+                } else {
+                    fileView.setText(R.string.photo_sync_listing);
+                }
             } else if (progress.fileTotal > 0 && progress.fileName != null && !progress.fileName.isEmpty()) {
                 fileView.setText(localized.getString(R.string.photo_sync_file,
                         progress.fileIndex, progress.fileTotal, progress.fileName));
-            } else if (SyncProgress.PHASE_LIST.equals(progress.phase)) {
-                fileView.setText(R.string.photo_sync_listing);
             } else if (progress.detail != null && !progress.detail.isEmpty()) {
                 fileView.setText(progress.detail);
             }

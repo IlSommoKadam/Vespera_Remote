@@ -110,7 +110,15 @@ public final class PhotoSyncEngine {
             }
             ftp.connect(port);
             String remoteRoot = ftp.resolveUserDir();
-            List<CommonsFtpClient.Entry> remote = ftp.listRecursive(remoteRoot);
+            Log.i(TAG, "listing " + remoteRoot + " on :" + port);
+            List<CommonsFtpClient.Entry> remote = ftp.listRecursive(remoteRoot, (dir, n) -> {
+                if (isPaused(pause)) throw new IOException("paused");
+                progress.fileName = dir;
+                progress.fileIndex = n;
+                progress.fileTotal = Math.max(n, 1);
+                progress.detail = dir;
+                publish(listener, progress);
+            });
             List<CommonsFtpClient.Entry> photos = new ArrayList<>();
             long totalBytes = 0;
             for (CommonsFtpClient.Entry entry : remote) {

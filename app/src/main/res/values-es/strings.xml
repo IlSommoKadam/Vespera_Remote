@@ -303,6 +303,7 @@
     <string name="photo_sync_phase_done">Completada</string>
     <string name="photo_sync_phase_error">Error</string>
     <string name="photo_sync_listing">Leyendo carpeta USER…</string>
+    <string name="photo_sync_listing_dir">Leyendo %1$s · %2$d archivos</string>
     <string name="photo_sync_stats">%1$s · %2$s · copiados %3$d, ya presentes %4$d, borrados %5$d</string>
     <string name="photo_sync_eta">Tiempo estimado: %1$s</string>
     <string name="photo_sync_overlay_btn">Permitir ventana sobre otras apps</string>

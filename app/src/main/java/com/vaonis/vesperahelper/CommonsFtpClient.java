@@ -47,6 +47,13 @@ final class CommonsFtpClient implements Closeable {
         void onBytes(long transferred) throws IOException;
     }
 
+    interface ListListener {
+        void onDir(String dir, int filesSoFar) throws IOException;
+    }
+
+    private static final int LIST_DATA_TIMEOUT_MS = 25_000;
+    private static final int TRANSFER_DATA_TIMEOUT_MS = 180_000;
+
     private final Network network;
     private final String host;
     private FTPClient ftp;
@@ -116,8 +123,12 @@ final class CommonsFtpClient implements Closeable {
     }
 
     List<Entry> listRecursive(String rootPath) throws IOException {
+        return listRecursive(rootPath, null);
+    }
+
+    List<Entry> listRecursive(String rootPath, ListListener listener) throws IOException {
         List<Entry> files = new ArrayList<>();
-        walk(normalizeDir(rootPath), files);
+        walk(normalizeDir(rootPath), files, listener);
         return files;
     }
 
@@ -204,7 +215,7 @@ final class CommonsFtpClient implements Closeable {
         ftp.configure(config);
         ftp.setConnectTimeout(8_000);
         ftp.setDefaultTimeout(20_000);
-        ftp.setDataTimeout(180_000);
+        ftp.setDataTimeout(TRANSFER_DATA_TIMEOUT_MS);
         ftp.setSocketFactory(new NetworkBoundSocketFactory(network, host));
         ftp.connect(host, port);
         if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
@@ -214,7 +225,8 @@ final class CommonsFtpClient implements Closeable {
         }
     }
 
-    private void walk(String dir, List<Entry> files) throws IOException {
+    private void walk(String dir, List<Entry> files, ListListener listener) throws IOException {
+        if (listener != null) listener.onDir(dir, files.size());
         if (!ftp.changeWorkingDirectory(dir)) {
             if (isUserDirName(dir)) throw new IOException("missing-user");
             return;
@@ -240,25 +252,25 @@ final class CommonsFtpClient implements Closeable {
                 files.add(new Entry(path, name, false, file.getSize()));
             }
         }
+        Log.i(TAG, "LIST " + dir + " files=" + listed.length + " total=" + files.size());
+        if (listener != null) listener.onDir(dir, files.size());
         for (String child : subdirs) {
-            walk(child, files);
+            walk(child, files, listener);
         }
     }
 
+    /** LIST only. MLSD hangs on several Vespera firmware builds until the data timeout. */
     private FTPFile[] listCurrent() throws IOException {
-        FTPFile[] listed = null;
+        ftp.setDataTimeout(LIST_DATA_TIMEOUT_MS);
         try {
-            listed = ftp.mlistDir();
-        } catch (IOException ignored) {
-            listed = null;
+            FTPFile[] listed = ftp.listFiles();
+            if (listed == null) {
+                throw new IOException("LIST failed: " + reply());
+            }
+            return listed;
+        } finally {
+            ftp.setDataTimeout(TRANSFER_DATA_TIMEOUT_MS);
         }
-        if (listed == null || !FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
-            listed = ftp.listFiles();
-        }
-        if (listed == null) {
-            throw new IOException("LIST failed: " + reply());
-        }
-        return listed;
     }
 
     private void ensureFtp() throws IOException {
