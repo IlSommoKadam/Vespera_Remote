@@ -123,6 +123,7 @@ public final class MainActivity extends Activity {
             if (connectionStatus != null) {
                 setConnectionState(connectionStatus);
                 if (VesperaConnectionService.STATUS_CONNECTED.equals(connectionStatus)) {
+                    autoConnectPending = false;
                     VesperaConnectionService.requestDaemonRoute(MainActivity.this);
                     show(getString(R.string.connected_to,
                             deviceStore.getModel(), deviceStore.getSsid()));
@@ -176,6 +177,7 @@ public final class MainActivity extends Activity {
         buildUi();
         refreshConfiguredDeviceLabel();
         PhotoSyncService.ensure(this);
+        kickAutoConnect();
     }
 
     private void buildUi() {
@@ -597,6 +599,7 @@ public final class MainActivity extends Activity {
         }
         if (locationManager != null && !locationManager.isLocationEnabled()) {
             vesperaInfo.setText(getString(R.string.location_off, scanPrerequisites()));
+            kickAutoConnect();
             return;
         }
         if (isVesperaConnected()) {
@@ -644,6 +647,15 @@ public final class MainActivity extends Activity {
             }
         }
         savedDeviceOnline = savedMatch != null;
+        if (!savedDeviceOnline && deviceStore.isConfigured()) {
+            String savedSsid = deviceStore.getSsid();
+            for (ScanResult result : found) {
+                if (savedSsid != null && savedSsid.equalsIgnoreCase(result.SSID)) {
+                    savedDeviceOnline = true;
+                    break;
+                }
+            }
+        }
 
         if (found.isEmpty()) {
             vesperaInfo.setText(getString(
@@ -657,6 +669,7 @@ public final class MainActivity extends Activity {
                 showIdleDeviceBar();
             }
             refreshConnectButtons();
+            maybeAutoConnect();
             return;
         }
         vesperaInfo.setText(getString(
@@ -693,14 +706,26 @@ public final class MainActivity extends Activity {
 
     private void maybeAutoConnect() {
         if (!autoConnectPending
-                || !savedDeviceOnline
                 || !deviceStore.isConfigured()
                 || isVesperaConnected()
                 || isVesperaRequesting()) {
             return;
         }
-        autoConnectPending = false;
+        // Scan is a hint that the AP is nearby; the daemon promote also no-ops if absent.
+        if (!savedDeviceOnline) return;
         connect();
+    }
+
+    private void kickAutoConnect() {
+        if (!autoConnectPending || !deviceStore.isConfigured() || isVesperaConnected()) {
+            return;
+        }
+        connectRequested = true;
+        showConnectingDeviceBar();
+        if (!isVesperaRequesting()) {
+            VesperaConnectionService.ensure(this);
+        }
+        refreshConnectButtons();
     }
 
     private LinearLayout buildScanLegendRow(float density) {
@@ -1272,6 +1297,7 @@ public final class MainActivity extends Activity {
             instrumentStatusReceiverRegistered = true;
         }
         refreshVesperaScan();
+        kickAutoConnect();
         if (photoPanel != null && currentTab == TAB_PHOTOS) photoPanel.onResume();
         if (telescopePanel != null && currentTab == TAB_TELESCOPE) {
             syncTelescopePanelHost();

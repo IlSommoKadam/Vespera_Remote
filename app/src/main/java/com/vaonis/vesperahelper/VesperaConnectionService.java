@@ -62,11 +62,29 @@ public final class VesperaConnectionService extends Service {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final Runnable startSingularityAfterConnect = this::startSingularityAfterConnect;
+    private final Runnable delayedPromote = () -> worker.execute(this::requestDaemonPromote);
+    private final Runnable delayedFind = this::findConnectedVespera;
+    private final Runnable delayedUnavailable = this::markUnavailableIfDisconnected;
     private String targetSsid;
     private String targetBssid;
 
     public static Network getActiveNetwork() { return activeNetwork; }
     public static String getLastStatus() { return lastStatus; }
+
+    /** Starts a system-wide associate if a Vespera is saved and we are not already on it. */
+    public static void ensure(Context context) {
+        if (context == null) return;
+        if (STATUS_CONNECTED.equals(lastStatus)) return;
+        if (lastStatus != null && lastStatus.startsWith(STATUS_REQUESTING)) return;
+        VesperaDeviceStore device = VesperaDeviceStore.from(context);
+        if (!device.isConfigured()) return;
+        try {
+            context.startForegroundService(new Intent(context, VesperaConnectionService.class)
+                    .setAction(ACTION_CONNECT));
+        } catch (Exception failure) {
+            Log.w(TAG, "ensure start failed", failure);
+        }
+    }
 
     @Override public void onCreate() {
         super.onCreate();
@@ -92,12 +110,12 @@ public final class VesperaConnectionService extends Service {
         stopRequested = false;
         if (ACTION_REFRESH.equals(action)) {
             findConnectedVespera();
-            return START_NOT_STICKY;
+            return START_STICKY;
         }
         Context localized = AppLocale.wrap(this);
         startForeground(NOTIFICATION_ID,
                 notification(localized.getString(R.string.conn_notification_connecting)));
-        if (holdCallback == null) connect();
+        connect();
         return START_STICKY;
     }
 
@@ -123,15 +141,17 @@ public final class VesperaConnectionService extends Service {
         targetBssid = device.getBssid();
         update(STATUS_REQUESTING + "|" + device.getModel() + "|" + targetSsid);
         try {
-            // Keeps ClientMode from bailing on Ethernet-primary devices.
             holdGenericWifiRequest();
+            mainHandler.removeCallbacks(delayedPromote);
+            mainHandler.removeCallbacks(delayedFind);
+            mainHandler.removeCallbacks(delayedUnavailable);
             worker.execute(this::requestDaemonPromote);
-            mainHandler.postDelayed(this::findConnectedVespera, 2_000);
-            mainHandler.postDelayed(() -> worker.execute(this::requestDaemonPromote), 4_000);
-            mainHandler.postDelayed(this::findConnectedVespera, 5_000);
-            mainHandler.postDelayed(() -> worker.execute(this::requestDaemonPromote), 8_000);
-            mainHandler.postDelayed(this::findConnectedVespera, 9_000);
-            mainHandler.postDelayed(this::markUnavailableIfDisconnected, 15_000);
+            mainHandler.postDelayed(delayedFind, 2_000);
+            mainHandler.postDelayed(delayedPromote, 4_000);
+            mainHandler.postDelayed(delayedFind, 5_000);
+            mainHandler.postDelayed(delayedPromote, 8_000);
+            mainHandler.postDelayed(delayedFind, 9_000);
+            mainHandler.postDelayed(delayedUnavailable, 15_000);
         } catch (RuntimeException failure) {
             update(STATUS_ERROR + "|" + failure.getClass().getSimpleName());
             stopSelf();
