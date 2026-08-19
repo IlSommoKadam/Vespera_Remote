@@ -545,7 +545,9 @@ final class PhotoPanel {
             mount.setEnabled(canMount);
             UiStyle.applyRaised(mount, canMount ? COLOR_CONNECTED : COLOR_OFFLINE, canMount);
         }
-        boolean showSafe = ejected && !mounted;
+        // When the HD is ejected/disconnected, hide the "Scollega HD" button.
+        // The user should only see the "safe to remove" hint.
+        boolean showSafe = ejected;
         eject.setVisibility(showSafe ? View.GONE : View.VISIBLE);
         ejectSafe.setVisibility(showSafe ? View.VISIBLE : View.GONE);
         if (!showSafe) {
