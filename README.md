@@ -51,6 +51,7 @@ L'app mantiene una richiesta Wi-Fi generica e chiede al daemon root `tools/vespe
 | 0.6.79 | 126 | Riprendi osservazione multi-night via `captureStore/startObservationFromStoredCapture` + storeId |
 | 0.6.80 | 127 | Riprendi fa auto-init se serve; Inizializza disabilitato se già init o in osservazione/ripresa |
 | 0.6.81 | 128 | Inizializza disabilitato se già inizializzato o in tracking |
+| 0.6.82 | 129 | Tab Foto: **Smonta HD** nascosto (basta **Spegni HD**) |
 
 Il daemon deve essere avviato come root sul Pi dopo il boot; l'app comunica con esso tramite `net.req` / `disk.req` nella propria directory esterna.
 

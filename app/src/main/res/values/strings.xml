@@ -467,7 +467,7 @@
     <string name="system_resume_sync_idle">Nessuna sync da riprendere.</string>
     <string name="system_hd_mount_title">Montaggio automatico HD</string>
     <string name="system_hd_power_off_title">Spegnimento HD</string>
-    <string name="system_hd_mount_info">Con Vespera online (API/FTP) monta l\'HD salvato. All\'apertura app se offline, e allo spegnimento telescopio, lo spegne. Attiva/Monta/Smonta/Spegni restano a mano.</string>
+    <string name="system_hd_mount_info">Con Vespera online (API/FTP) monta l\'HD salvato. All\'apertura app se offline, e allo spegnimento telescopio, lo spegne. Attiva/Monta/Spegni restano a mano.</string>
     <string name="system_hd_mount_none">Nessun HD salvato.</string>
     <string name="system_hd_mount_saved">HD salvato: %1$s.</string>
     <string name="system_clock_title">Sincronizzazione orologio NTP</string>

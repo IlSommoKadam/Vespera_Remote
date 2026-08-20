@@ -467,7 +467,7 @@
     <string name="system_resume_sync_idle">No sync to resume.</string>
     <string name="system_hd_mount_title">Automatic HD mount</string>
     <string name="system_hd_power_off_title">HD power off</string>
-    <string name="system_hd_mount_info">With Vespera online (API/FTP), mounts the saved HD. On app open if offline, and when powering off the telescope, powers the HD off. Activate/Mount/Unmount/Power off remain manual.</string>
+    <string name="system_hd_mount_info">With Vespera online (API/FTP), mounts the saved HD. On app open if offline, and when powering off the telescope, powers the HD off. Activate/Mount/Power off remain manual.</string>
     <string name="system_hd_mount_none">No HD saved.</string>
     <string name="system_hd_mount_saved">Saved HD: %1$s.</string>
     <string name="system_clock_title">NTP clock sync</string>

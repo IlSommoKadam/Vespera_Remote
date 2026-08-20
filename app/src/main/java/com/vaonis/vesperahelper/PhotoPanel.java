@@ -545,11 +545,11 @@ final class PhotoPanel {
         boolean hasSelection = selectedId != null && !selectedId.isEmpty();
         boolean hasSaved = hdStore.isConfigured() || !diskStore.getId().isEmpty();
         boolean hasListed = listedCount > 0;
+        // Smonta HD is hidden: Spegni HD already umounts then powers USB off.
+        unmount.setVisibility(View.GONE);
         if (mounted) {
             mount.setVisibility(View.GONE);
-            unmount.setVisibility(View.VISIBLE);
         } else {
-            unmount.setVisibility(View.GONE);
             mount.setVisibility(View.VISIBLE);
             // After power-off/eject the list is empty: still allow Attiva/Monta on the saved HD.
             boolean canMount = (hasListed && hasSelection) || hasSaved;
