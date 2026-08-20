@@ -36,7 +36,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Mounts the USB HD, syncs Vespera /USER photos around the clock, and serves them over FTP. */
+/** Mounts the USB HD, syncs Vespera /USER photos at night and on reconnect, and serves them over FTP. */
 public final class PhotoSyncService extends Service {
     public static final String ACTION_STATUS = "com.vaonis.vesperahelper.PHOTO_STATUS";
     public static final String ACTION_PROGRESS = "com.vaonis.vesperahelper.PHOTO_PROGRESS";
@@ -58,6 +58,8 @@ public final class PhotoSyncService extends Service {
     public static final String ACTION_SYNC_CLOCK = "com.vaonis.vesperahelper.PHOTO_SYNC_CLOCK";
     public static final String ACTION_APPLY_SETTINGS = "com.vaonis.vesperahelper.PHOTO_APPLY_SETTINGS";
     public static final String ACTION_AUTO_SYNC = "com.vaonis.vesperahelper.PHOTO_AUTO_SYNC";
+    public static final String ACTION_SYNC_THEN_SHUTDOWN =
+            "com.vaonis.vesperahelper.PHOTO_SYNC_THEN_SHUTDOWN";
     public static final String EXTRA_SPEC = "spec";
     public static final String EXTRA_DISK_ID = "disk_id";
     public static final String EXTRA_DISKS = "disks";
@@ -85,6 +87,7 @@ public final class PhotoSyncService extends Service {
     /** Occupied percent of the mounted USB HD that shows the disk warning. */
     static final int HD_WARNING_PERCENT = 80;
     private static final long STORAGE_SYNC_COOLDOWN_MS = 10 * 60_000L;
+    private static final long ONLINE_SYNC_COOLDOWN_MS = 10 * 60_000L;
     private static final long AUTO_RETRY_MS = 5 * 60_000L;
     private static final long MIN_AUTO_DELAY_MS = 5_000L;
     private static final long SUN_TOO_HIGH_RETRY_MS = 10 * 60_000L;
@@ -122,6 +125,7 @@ public final class PhotoSyncService extends Service {
     private String lastBroadcastPhase = "";
     private volatile long extraAutoDelayMs;
     private long lastStorageSyncAt;
+    private long lastOnlineSyncAt;
     private boolean connectionReceiverRegistered;
     private boolean clockReceiverRegistered;
     private final BroadcastReceiver connectionReceiver = new BroadcastReceiver() {
@@ -130,7 +134,7 @@ public final class PhotoSyncService extends Service {
             if (VesperaConnectionService.STATUS_CONNECTED.equals(status)) {
                 extraAutoDelayMs = 0;
                 worker.execute(PhotoSyncService.this::refreshTelescopeFtpLocked);
-                syncExecutor.execute(PhotoSyncService.this::resumeSuspendedIfNeeded);
+                syncExecutor.execute(PhotoSyncService.this::syncOnVesperaOnline);
             } else {
                 worker.execute(() -> {
                     telescopeFtp.stop();
@@ -253,6 +257,12 @@ public final class PhotoSyncService extends Service {
     public static void applySettings(Context context) {
         context.startForegroundService(new Intent(context, PhotoSyncService.class)
                 .setAction(ACTION_APPLY_SETTINGS));
+    }
+
+    /** Copy USER photos, then send the telescope shutdown command. */
+    public static void syncThenShutdown(Context context) {
+        context.startForegroundService(new Intent(context, PhotoSyncService.class)
+                .setAction(ACTION_SYNC_THEN_SHUTDOWN));
     }
 
     @Override public void onCreate() {
@@ -399,6 +409,14 @@ public final class PhotoSyncService extends Service {
             mainHandler.post(this::rescheduleFromSettings);
         } else if (ACTION_AUTO_SYNC.equals(action)) {
             syncExecutor.execute(() -> maybeAutoSync(false, SystemActivityLog.KIND_PHOTO_SYNC));
+        } else if (ACTION_SYNC_THEN_SHUTDOWN.equals(action)) {
+            pauseRequested.set(false);
+            if (syncStore != null) {
+                syncStore.setPaused(false);
+                syncStore.setPauseUntilSchedule(false);
+            }
+            beginForcedSyncUi();
+            syncExecutor.execute(() -> lastSyncThenShutdown(-1, null, -1));
         }
         return START_STICKY;
     }
@@ -725,15 +743,13 @@ public final class PhotoSyncService extends Service {
         }
         long now = System.currentTimeMillis();
         long nextAt = syncStore.nextAutoAt(now);
-        boolean nextIsDay = syncStore.isDaytime(Math.max(nextAt, now));
-        float intervalHours = nextIsDay ? syncStore.dayIntervalHours() : syncStore.nightIntervalHours();
         String nextNightEnd = formatClock(syncStore.nextNightEndAt(now));
         int label = (syncStore.lastAt() > 0 || syncStore.lastAttemptAt() > 0) && nextAt <= now
                 ? R.string.photos_sync_overdue
                 : R.string.photos_sync_next;
         syncStatus = localized.getString(label,
                 formatClock(nextAt),
-                PhotoSyncStore.formatIntervalHours(intervalHours),
+                PhotoSyncStore.formatIntervalHours(syncStore.nightIntervalHours()),
                 nextNightEnd);
     }
 
@@ -871,8 +887,11 @@ public final class PhotoSyncService extends Service {
             return;
         }
         if (settings.sunTooHighDay() == today) {
-            scheduleSunTooHighCheck();
-            return;
+            String done = settings.sunTooHighResult();
+            if (!SystemSettingsStore.SUN_RESULT_SHUTDOWN_FAIL.equals(done)) {
+                scheduleSunTooHighCheck();
+                return;
+            }
         }
         if (!isVesperaConnected()) {
             Log.i(TAG, "sun-too-high skip: Vespera offline — retry");
@@ -921,29 +940,42 @@ public final class PhotoSyncService extends Service {
         Log.i(TAG, "sun-too-high retry in " + (SUN_TOO_HIGH_RETRY_MS / 1000L) + "s");
     }
 
+    /**
+     * Copy remaining USER photos, then power off the telescope. Used by the
+     * sun-too-high check and by the manual shutdown button. {@code dayKey}
+     * ≥ 0 records the sun-too-high outcome; {@code -1} is a manual shutdown.
+     */
     private void lastSyncThenShutdown(int dayKey, Network network, int apiPort) {
+        Log.i(TAG, "photo sync before telescope shutdown");
         pauseRequested.set(false);
         if (syncStore != null) {
             syncStore.setPaused(false);
             syncStore.setPauseUntilSchedule(false);
         }
-        maybeAutoSync(true, null);
+        maybeAutoSync(true, SystemActivityLog.KIND_PHOTO_SYNC);
         Network net = network;
         if (net == null) net = resolveVesperaNetwork();
+        int port = apiPort;
+        if (port <= 0) {
+            VesperaPortScan scan = VesperaPortScanner.lastScan();
+            if (scan != null && scan.apiRestPort > 0) port = scan.apiRestPort;
+        }
         VesperaCommandClient.Result result = VesperaCommandClient.send(
-                PhotoSyncEngine.HOST, apiPort, net, VesperaCommandClient.Command.SHUTDOWN);
-        String code = (result != null && result.success)
-                ? SystemSettingsStore.SUN_RESULT_SHUTDOWN_OK
-                : SystemSettingsStore.SUN_RESULT_SHUTDOWN_FAIL;
-        SystemSettingsStore.from(this).recordSunTooHigh(dayKey, code);
-        SystemActivityLog.record(this, SystemActivityLog.KIND_SUN_TOO_HIGH,
-                (result != null && result.success)
-                        ? SystemActivityLog.DETAIL_SHUTDOWN_OK
-                        : SystemActivityLog.DETAIL_SHUTDOWN_FAIL);
-        Log.i(TAG, "sun-too-high shutdown " + code
+                PhotoSyncEngine.HOST, port, net, VesperaCommandClient.Command.SHUTDOWN);
+        boolean ok = result != null && result.success;
+        if (dayKey >= 0) {
+            String code = ok
+                    ? SystemSettingsStore.SUN_RESULT_SHUTDOWN_OK
+                    : SystemSettingsStore.SUN_RESULT_SHUTDOWN_FAIL;
+            SystemSettingsStore.from(this).recordSunTooHigh(dayKey, code);
+            SystemActivityLog.record(this, SystemActivityLog.KIND_SUN_TOO_HIGH,
+                    ok ? SystemActivityLog.DETAIL_SHUTDOWN_OK
+                            : SystemActivityLog.DETAIL_SHUTDOWN_FAIL);
+        }
+        Log.i(TAG, "shutdown after photo sync " + (ok ? "ok" : "fail")
                 + (result == null ? "" : (" http=" + result.httpCode + " " + result.message)));
         Context localized = AppLocale.wrap(this);
-        message = localized.getString(result != null && result.success
+        message = localized.getString(ok
                 ? R.string.system_sun_result_shutdown_ok
                 : R.string.system_sun_result_shutdown_fail);
         publish();
@@ -1083,6 +1115,13 @@ public final class PhotoSyncService extends Service {
             }
             if (syncStore != null && syncStore.paused() && !force) {
                 refreshSyncHint();
+                return;
+            }
+            if (!force && !resume && syncStore != null
+                    && syncStore.isDaytime(System.currentTimeMillis())) {
+                Log.i(TAG, "auto-sync skip: daytime (no periodic day slots)");
+                refreshSyncHint();
+                publish();
                 return;
             }
             if (!force && !resume && !syncStore.isAutoDue(System.currentTimeMillis())) {
@@ -1287,6 +1326,31 @@ public final class PhotoSyncService extends Service {
         File root = DaemonDisk.photosDir(this);
         return (syncStore != null && syncStore.hasSuspendedWork(this))
                 || PhotoSyncEngine.hasIncomplete(root);
+    }
+
+    /**
+     * When Vespera goes from offline to online: resume an interrupted copy, or
+     * start a fresh USER sync (replaces the old daytime interval).
+     */
+    private void syncOnVesperaOnline() {
+        SystemSettingsStore settings = SystemSettingsStore.from(this);
+        if (syncStore != null && syncStore.paused()) {
+            Log.i(TAG, "Vespera online — photo sync skipped (paused)");
+            return;
+        }
+        if (hasSuspendedWork() && settings.resumeSync()) {
+            resumeSuspendedIfNeeded();
+            return;
+        }
+        if (!settings.photoSync()) return;
+        long now = System.currentTimeMillis();
+        if (lastOnlineSyncAt > 0 && now - lastOnlineSyncAt < ONLINE_SYNC_COOLDOWN_MS) {
+            Log.i(TAG, "Vespera online — photo sync skipped (cooldown)");
+            return;
+        }
+        lastOnlineSyncAt = now;
+        Log.i(TAG, "Vespera online — starting photo sync");
+        maybeAutoSync(true, SystemActivityLog.KIND_PHOTO_SYNC);
     }
 
     /**

@@ -26,7 +26,7 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Builds and refreshes the Foto tab (USB HD + all-day FTP sync). */
+/** Builds and refreshes the Foto tab (USB HD + night/reconnect FTP sync). */
 final class PhotoPanel {
     private static final int COLOR_OFFLINE = UiStyle.STEEL;
     private static final int COLOR_DETECTED = UiStyle.AMBER;
@@ -49,7 +49,6 @@ final class PhotoPanel {
     private final Button eject;
     private final TextView ejectSafe;
     private final TextView syncWindow;
-    private final EditText dayIntervalInput;
     private final EditText nightIntervalInput;
     private final EditText dayStartHourInput;
     private final EditText dayEndHourInput;
@@ -144,35 +143,6 @@ final class PhotoPanel {
         applyInterval = action(activity.getString(R.string.photo_sync_interval_apply), COLOR_CONNECTING);
         applyInterval.setOnClickListener(v -> applyInterval());
 
-        LinearLayout dayIntervalRow = new LinearLayout(activity);
-        dayIntervalRow.setOrientation(LinearLayout.HORIZONTAL);
-        dayIntervalRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        TextView dayIntervalLabel = body(activity.getString(R.string.photo_sync_day_interval_label));
-        dayIntervalLabel.setPadding(0, 0, (int) (8 * density), 0);
-        dayIntervalInput = new EditText(activity);
-        dayIntervalInput.setHint(R.string.photo_sync_interval_hint);
-        dayIntervalInput.setText(PhotoSyncStore.formatIntervalHours(syncStore.dayIntervalHours()));
-        dayIntervalInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
-                | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        dayIntervalInput.setSingleLine(true);
-        dayIntervalInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
-        dayIntervalInput.setEms(4);
-        LinearLayout.LayoutParams intervalLp = new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        dayIntervalInput.setLayoutParams(intervalLp);
-        TextView intervalUnit = body(activity.getString(R.string.photo_sync_interval_unit));
-        intervalUnit.setPadding((int) (8 * density), 0, (int) (8 * density), 0);
-        dayIntervalInput.setOnEditorActionListener((v, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_DONE) {
-                applyInterval();
-                return true;
-            }
-            return false;
-        });
-        dayIntervalRow.addView(dayIntervalLabel);
-        dayIntervalRow.addView(dayIntervalInput);
-        dayIntervalRow.addView(intervalUnit);
-
         LinearLayout nightIntervalRow = new LinearLayout(activity);
         nightIntervalRow.setOrientation(LinearLayout.HORIZONTAL);
         nightIntervalRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -186,6 +156,8 @@ final class PhotoPanel {
         nightIntervalInput.setSingleLine(true);
         nightIntervalInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
         nightIntervalInput.setEms(4);
+        LinearLayout.LayoutParams intervalLp = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
         nightIntervalInput.setLayoutParams(intervalLp);
         TextView intervalUnit2 = body(activity.getString(R.string.photo_sync_interval_unit));
         intervalUnit2.setPadding((int) (8 * density), 0, (int) (8 * density), 0);
@@ -304,7 +276,6 @@ final class PhotoPanel {
         syncBox.setLayoutParams(boxLp);
         syncBox.addView(syncTitle);
         syncBox.addView(syncWindow);
-        syncBox.addView(dayIntervalRow);
         syncBox.addView(nightIntervalRow);
         syncBox.addView(dayStartRow);
         syncBox.addView(dayEndRow);
@@ -603,13 +574,11 @@ final class PhotoPanel {
 
     private void applyInterval() {
         scroll.pin();
-        float dayHours = PhotoSyncStore.parseIntervalHours(dayIntervalInput.getText().toString());
         float nightHours = PhotoSyncStore.parseIntervalHours(nightIntervalInput.getText().toString());
         int dayStart = parseHour(dayStartHourInput.getText().toString(), syncStore.dayStartHour());
         int dayEnd = parseHour(dayEndHourInput.getText().toString(), syncStore.dayEndHour());
         boolean hoursEdited = dayStart != syncStore.dayStartHour() || dayEnd != syncStore.dayEndHour();
 
-        syncStore.setDayIntervalHours(dayHours);
         syncStore.setNightIntervalHours(nightHours);
         if (hoursEdited) {
             syncStore.setAutoHours(false);
@@ -617,7 +586,6 @@ final class PhotoPanel {
             syncStore.setDayEndHour(dayEnd);
         }
 
-        dayIntervalInput.setText(PhotoSyncStore.formatIntervalHours(dayHours));
         nightIntervalInput.setText(PhotoSyncStore.formatIntervalHours(nightHours));
         refreshHourFields();
         locationStatus.setText(locationText());
@@ -762,10 +730,9 @@ final class PhotoPanel {
 
     private String windowText() {
         return activity.getString(R.string.photo_sync_interval_help,
-                PhotoSyncStore.formatIntervalHours(syncStore.dayIntervalHours()),
+                PhotoSyncStore.formatIntervalHours(syncStore.nightIntervalHours()),
                 syncStore.dayStartHour(),
-                syncStore.dayEndHour(),
-                PhotoSyncStore.formatIntervalHours(syncStore.nightIntervalHours()));
+                syncStore.dayEndHour());
     }
 
     private static int parseHour(String raw, int fallback) {

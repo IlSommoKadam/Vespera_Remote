@@ -213,7 +213,6 @@ final class CommonsFtpClient implements Closeable {
         FTPClientConfig config = new FTPClientConfig(FTPClientConfig.SYST_UNIX);
         config.setServerLanguageCode("en");
         ftp.configure(config);
-        ftp.setUnparseableEntries(true);
         ftp.setConnectTimeout(8_000);
         ftp.setDefaultTimeout(20_000);
         ftp.setDataTimeout(TRANSFER_DATA_TIMEOUT_MS);

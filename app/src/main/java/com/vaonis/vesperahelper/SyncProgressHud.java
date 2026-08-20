@@ -23,10 +23,19 @@ final class SyncProgressHud {
 
     private final Service service;
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+    private static final long HIDE_AFTER_DONE_MS = 2_000L;
+    private static final long HIDE_AFTER_ERROR_MS = 8_000L;
+
     private boolean hiddenByUser;
     private boolean windowShown;
     private long lastBindAt;
     private String lastPhase = "";
+    private final Runnable hideRunnable = () -> {
+        if (latest != null && latest.active) return;
+        if (latest != null && SyncProgress.PHASE_PAUSED.equals(latest.phase)) return;
+        windowShown = false;
+        finishWindow();
+    };
 
     SyncProgressHud(Service service) {
         this.service = service;
@@ -35,6 +44,7 @@ final class SyncProgressHud {
     void show() {
         main.post(() -> {
             hiddenByUser = false;
+            main.removeCallbacks(hideRunnable);
             if (windowShown) return;
             windowShown = true;
             startWindow();
@@ -45,6 +55,7 @@ final class SyncProgressHud {
         main.post(() -> {
             hiddenByUser = true;
             windowShown = false;
+            main.removeCallbacks(hideRunnable);
             finishWindow();
         });
     }
@@ -57,17 +68,14 @@ final class SyncProgressHud {
     void hide() {
         main.post(() -> {
             windowShown = false;
+            main.removeCallbacks(hideRunnable);
             finishWindow();
         });
     }
 
     void hideLater(long delayMs) {
-        main.postDelayed(() -> {
-            if (latest != null && latest.active) return;
-            if (latest != null && SyncProgress.PHASE_PAUSED.equals(latest.phase)) return;
-            windowShown = false;
-            finishWindow();
-        }, delayMs);
+        main.removeCallbacks(hideRunnable);
+        main.postDelayed(hideRunnable, delayMs);
     }
 
     private void bindLocked(SyncProgress progress) {
@@ -77,13 +85,17 @@ final class SyncProgressHud {
         long now = SystemClock.elapsedRealtime();
         if (!phaseChanged && now - lastBindAt < 200) return;
         lastBindAt = now;
-        boolean show = progress.active
-                || SyncProgress.PHASE_DONE.equals(progress.phase)
-                || SyncProgress.PHASE_ERROR.equals(progress.phase);
+        boolean done = SyncProgress.PHASE_DONE.equals(progress.phase);
+        boolean error = SyncProgress.PHASE_ERROR.equals(progress.phase);
+        boolean show = progress.active || done || error;
+        if (progress.active) main.removeCallbacks(hideRunnable);
         // Do not startActivity on every byte: that cancels in-flight button taps.
         if (show && !hiddenByUser && !windowShown) {
             windowShown = true;
             startWindow();
+        }
+        if ((done || error) && !hiddenByUser && windowShown) {
+            hideLater(done ? HIDE_AFTER_DONE_MS : HIDE_AFTER_ERROR_MS);
         }
         service.sendBroadcast(new Intent(PhotoSyncService.ACTION_PROGRESS)
                 .setPackage(service.getPackageName()));

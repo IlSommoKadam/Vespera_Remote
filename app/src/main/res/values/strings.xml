@@ -211,7 +211,8 @@
     <string name="telescope_confirm_init">Inizializzare il telescopio? Servono data/ora attuali e le coordinate dell’osservatorio (tab Foto).</string>
     <string name="telescope_confirm_init_site">Inizializzare il telescopio con l’osservatorio «%1$s» (%2$s)?</string>
     <string name="telescope_shutdown_title">Spegni telescopio</string>
-    <string name="telescope_shutdown_message">Spegnere il Vespera? Il Wi‑Fi si chiuderà e Helper perderà la connessione.</string>
+    <string name="telescope_shutdown_message">Prima vengono copiate le foto USER sull\'HD, poi il Vespera si spegne. Il Wi‑Fi si chiuderà e Helper perderà la connessione.</string>
+    <string name="telescope_shutdown_syncing">Copia foto in corso, poi spegnimento…</string>
     <string name="status_tab_title">Stato Vespera</string>
     <string name="status_tab_infra">Infrastruttura</string>
     <string name="status_tab_instrument">Strumento (API REST)</string>
@@ -294,13 +295,13 @@
     <string name="photo_hd_not_saved">Nessun HD salvato: dopo il primo montaggio verrà rimontato all\'avvio.</string>
     <string name="photo_hd_saved">HD salvato: %1$s (id %2$s) — rimontaggio automatico all\'avvio.</string>
     <string name="photo_hd_row_mounted">montato</string>
-    <string name="photo_sync_idle">In attesa. Di giorno e di notte, se Vespera e HD sono pronti, le foto USER vengono copiate, verificate e cancellate sullo strumento.</string>
+    <string name="photo_sync_idle">In attesa. Di notte, all\'accensione del Vespera e prima dello spegnimento, se HD è pronto, le foto USER vengono copiate, verificate e cancellate sullo strumento.</string>
     <string name="photo_sync_window">@string/photo_sync_idle</string>
     <string name="photo_sync_interval_label">Ogni</string>
     <string name="photo_sync_interval_hint">2</string>
     <string name="photo_sync_interval_unit">ore</string>
     <string name="photo_sync_interval_apply">Applica</string>
-    <string name="photo_sync_interval_help">Sync automatica: di giorno ogni %1$s h (%2$02d:00–%3$02d:00) e di notte ogni %4$s h (fuori da quel range).</string>
+    <string name="photo_sync_interval_help">Sync automatica di notte ogni %1$s h. Di giorno (%2$02d:00–%3$02d:00) niente orario: parte all\'accensione del Vespera e un\'ultima volta prima dello spegnimento.</string>
     <string name="photo_sync_night">Sync notturna attiva</string>
     <string name="photo_sync_need_hd">Monta prima l\'HD USB.</string>
     <string name="photo_sync_need_wifi">Le foto stanno sul Vespera: connettilo dalla tab Wi‑Fi, poi riprova.</string>
@@ -383,8 +384,8 @@
     <string name="photos_sync_need_hd">@string/photo_sync_need_hd</string>
     <string name="photos_sync_need_vespera">@string/photo_sync_need_wifi</string>
     <string name="photos_sync_night">sync automatica notturna</string>
-    <string name="photos_sync_next">Prossima sync automatica: %1$s (ogni %2$s h). Notte termina alle %3$s</string>
-    <string name="photos_sync_overdue">Sync automatica in ritardo (prevista alle %1$s, ogni %2$s h). Notte termina alle %3$s</string>
+    <string name="photos_sync_next">Prossima sync notturna: %1$s (ogni %2$s h). Di giorno all\'accensione del Vespera. Notte termina alle %3$s</string>
+    <string name="photos_sync_overdue">Sync notturna in ritardo (prevista alle %1$s, ogni %2$s h). Notte termina alle %3$s</string>
     <string name="photos_sync_file">@string/photo_sync_file</string>
     <string name="photos_sync_no_user">Cartella USER assente sul Vespera.</string>
     <string name="photos_sync_local_user">HD non scrivibile: bind USB interrotto. Premi Monta o riprova dopo il riavvio del daemon.</string>
@@ -444,7 +445,7 @@
     <string name="system_saved">Impostazioni salvate.</string>
     <string name="system_activity_off">Disabilitata.</string>
     <string name="system_photo_sync_title">Sync foto programmata</string>
-    <string name="system_photo_sync_info">Di giorno ogni %1$s h (%2$02d:00–%3$02d:00), di notte ogni %4$s h. Prossima: %5$s.</string>
+    <string name="system_photo_sync_info">Di notte ogni %1$s h. Di giorno (%2$02d:00–%3$02d:00) all\'accensione del Vespera e prima dello spegnimento. Prossima: %4$s.</string>
     <string name="system_photo_sync_last">Ultima sync: %1$s — %2$s</string>
     <string name="system_photo_sync_never">Nessuna sync ancora.</string>
     <string name="system_photo_sync_paused">Sospesa dall’utente.</string>

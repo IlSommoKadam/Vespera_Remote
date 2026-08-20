@@ -9,7 +9,7 @@ import java.util.Calendar;
 import java.util.Locale;
 import java.util.TimeZone;
 
-/** Last photo-sync run and day/night automatic intervals. */
+/** Last photo-sync run and night automatic interval (no periodic daytime slots). */
 final class PhotoSyncStore {
     static final int DEFAULT_DAY_START = 10;
     static final int DEFAULT_DAY_END = 19;
@@ -266,14 +266,14 @@ final class PhotoSyncStore {
     }
 
     static float parseIntervalHours(String raw) {
-        if (raw == null) return DEFAULT_DAY_INTERVAL_HOURS;
+        if (raw == null) return DEFAULT_NIGHT_INTERVAL_HOURS;
         String text = raw.trim().toLowerCase(Locale.US).replace(',', '.');
         if (text.endsWith("h")) text = text.substring(0, text.length() - 1).trim();
-        if (text.isEmpty()) return DEFAULT_DAY_INTERVAL_HOURS;
+        if (text.isEmpty()) return DEFAULT_NIGHT_INTERVAL_HOURS;
         try {
             return clampIntervalHours(Float.parseFloat(text));
         } catch (NumberFormatException ignored) {
-            return DEFAULT_DAY_INTERVAL_HOURS;
+            return DEFAULT_NIGHT_INTERVAL_HOURS;
         }
     }
 
@@ -283,10 +283,6 @@ final class PhotoSyncStore {
             return String.valueOf(Math.round(clamped));
         }
         return String.format(Locale.US, "%.2f", clamped).replaceAll("0+$", "").replaceAll("\\.$", "");
-    }
-
-    long dayIntervalMs() {
-        return Math.round(dayIntervalHours() * 3_600_000L);
     }
 
     long nightIntervalMs() {
@@ -321,10 +317,10 @@ final class PhotoSyncStore {
     }
 
     /**
-     * First scheduled slot strictly after {@code refMs}. Day slots start at
-     * {@link #dayStartHour()} every {@link #dayIntervalHours()} until
-     * {@link #dayEndHour()}; night slots start at day end every
-     * {@link #nightIntervalHours()} until the next day start.
+     * First scheduled slot strictly after {@code refMs}. Night slots start at
+     * {@link #dayEndHour()} every {@link #nightIntervalHours()} and stop before
+     * {@link #dayStartHour()}. Daytime has no periodic slots (Vespera is off
+     * after the sun-too-high shutdown); the next slot is night start.
      */
     private long nextSlotAfter(long refMs) {
         Calendar calendar = Calendar.getInstance(zone());
@@ -349,15 +345,26 @@ final class PhotoSyncStore {
             calendar.set(Calendar.SECOND, 0);
             calendar.set(Calendar.MILLISECOND, 0);
             long nightStartMs = calendar.getTimeInMillis();
-            return nextIntervalSlot(nightStartMs, nightIntervalMs(), refMs, dayStartMs);
+            long slot = nextIntervalSlot(nightStartMs, nightIntervalMs(), refMs, dayStartMs);
+            if (slot >= dayStartMs) return dayEndMs;
+            return slot;
         }
         if (refMs < dayEndMs) {
-            return nextIntervalSlot(dayStartMs, dayIntervalMs(), refMs, dayEndMs);
+            return dayEndMs;
         }
         calendar.setTimeInMillis(dayStartMs);
         calendar.add(Calendar.DAY_OF_YEAR, 1);
         long nextDayStartMs = calendar.getTimeInMillis();
-        return nextIntervalSlot(dayEndMs, nightIntervalMs(), refMs, nextDayStartMs);
+        long slot = nextIntervalSlot(dayEndMs, nightIntervalMs(), refMs, nextDayStartMs);
+        if (slot >= nextDayStartMs) {
+            calendar.setTimeInMillis(nextDayStartMs);
+            calendar.set(Calendar.HOUR_OF_DAY, dayEndHour());
+            calendar.set(Calendar.MINUTE, 0);
+            calendar.set(Calendar.SECOND, 0);
+            calendar.set(Calendar.MILLISECOND, 0);
+            return calendar.getTimeInMillis();
+        }
+        return slot;
     }
 
     /** Next interval boundary strictly after {@code refMs}, or {@code periodEndMs}. */
@@ -372,14 +379,29 @@ final class PhotoSyncStore {
     }
 
     long nextAutoAt(long nowMs) {
+        if (isDaytime(nowMs)) return nextNightStartAt(nowMs);
         long last = Math.max(lastAt(), lastAttemptAt());
         if (last <= 0) return nowMs;
         if (last > nowMs + 120_000L) return nowMs;
         return nextSlotAfter(last);
     }
 
+    /** Tonight's {@link #dayEndHour()} (night start), or tomorrow's if already past it. */
+    long nextNightStartAt(long nowMs) {
+        Calendar calendar = Calendar.getInstance(zone());
+        calendar.setTimeInMillis(nowMs);
+        calendar.set(Calendar.MINUTE, 0);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        calendar.set(Calendar.HOUR_OF_DAY, dayEndHour());
+        if (nowMs < calendar.getTimeInMillis()) return calendar.getTimeInMillis();
+        calendar.add(Calendar.DAY_OF_YEAR, 1);
+        return calendar.getTimeInMillis();
+    }
+
     boolean isAutoDue(long nowMs) {
         if (paused()) return false;
+        if (isDaytime(nowMs)) return false;
         return nowMs >= nextAutoAt(nowMs);
     }
 
@@ -402,13 +424,22 @@ final class PhotoSyncStore {
     }
 
     /**
-     * True if a sync was left unfinished (crash, kill, pause, or leftover
-     * {@code .part} files). Used on app/service restart to auto-continue.
+     * Fast UI-safe check: prefs / pause / marker only. Never walks the photo
+     * tree (that can ANR on a large USB HD when called from the main thread).
      */
-    boolean hasSuspendedWork(Context context) {
+    boolean hasSuspendedWorkQuick(Context context) {
         if (inProgress() || paused()) return true;
         File marker = markerFile(context);
-        if (marker != null && marker.isFile()) return true;
+        return marker != null && marker.isFile();
+    }
+
+    /**
+     * True if a sync was left unfinished (crash, kill, pause, or leftover
+     * {@code .part} files). Used on app/service restart to auto-continue.
+     * May scan the HD — call only from a background thread.
+     */
+    boolean hasSuspendedWork(Context context) {
+        if (hasSuspendedWorkQuick(context)) return true;
         File root = DaemonDisk.photosDir(context);
         return PhotoSyncEngine.hasIncomplete(root);
     }

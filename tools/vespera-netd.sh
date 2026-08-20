@@ -3,8 +3,9 @@
 # The app cannot run `su` (SELinux). This daemon applies:
 #   - cmd wifi connect-network  (system-wide SSID, OwnerUid 1000)
 #   - ip rule for 10.0.0.0/24 via wlan0 (Singularity reaches API without VPN)
-#   - start-singularity: launch only if not running (no force-stop)
-#   - restart-singularity: force-stop + relaunch only when running but not connected to Vespera
+#   - start-singularity: launch only if not running (no force-stop); UI stays in background
+#   - restart-singularity: force-stop + relaunch without taking the screen
+#     (Singularity comes to front only if the user opens it by hand)
 #   - keep VesperaHelper FGS alive after crash / force-stop / swipe-away (resume photo sync)
 #   - list-disks / mount-disk / umount-disk / disk-status / ensure-bind  (USB HD)
 #
@@ -726,9 +727,11 @@ handle_cmd() {
     promote) promote "$a" "$b" ;;
     route) apply_route ;;
     restart-singularity)
+      front_tid=$(front_task_id)
       am force-stop "$SINGULARITY_PKG" 2>/dev/null
       sleep 1
-      start_singularity_background
+      launch_singularity_process
+      hold_front_over_singularity "$front_tid"
       write_ack "singularity-restart-ok $(date)"
       ;;
     start-singularity)
@@ -762,24 +765,82 @@ singularity_pid() {
   echo "$PID"
 }
 
-# Launch Singularity without keeping it in the foreground (restore VesperaHelper).
-# Never force-stops: only starts if the process is missing.
+# Launch Singularity without taking the screen. It must stay in recents until
+# the user opens it by hand. Never force-stops: only starts if the process is missing.
 start_singularity_background() {
-  if [ -z "$(singularity_pid)" ]; then
-    am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
-      -n "$SINGULARITY_ACTIVITY" \
-      || am start -n "$SINGULARITY_ACTIVITY" \
-      || monkey -p "$SINGULARITY_PKG" -c android.intent.category.LAUNCHER 1
-    sleep 2
+  front_tid=$(front_task_id)
+  if [ -n "$(singularity_pid)" ]; then
+    echo "singularity-already-running $(date)" >&2
+    return 0
   fi
-  bring_helper_front
+  launch_singularity_process
+  hold_front_over_singularity "$front_tid"
 }
 
-bring_helper_front() {
-  am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
-    -n "$HELPER_PKG/.MainActivity" >/dev/null 2>&1 \
-    || am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
-         -p "$HELPER_PKG" >/dev/null 2>&1
+# Do not use MAIN/LAUNCHER on Helper: that recreates MainActivity (looks like a restart).
+# Do not use monkey: a single event can be KEYCODE_HOME.
+launch_singularity_process() {
+  echo "launch-singularity $(date)" >&2
+  am start --activity-no-animation --activity-no-user-action -n "$SINGULARITY_ACTIVITY" >/dev/null 2>&1 \
+    || am start --activity-no-animation --activity-no-user-action \
+         -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
+         -n "$SINGULARITY_ACTIVITY" >/dev/null 2>&1
+}
+
+task_id_from_line() {
+  tid=$(printf '%s' "$1" | sed 's/.*taskId=\([0-9][0-9]*\).*/\1/')
+  case "$tid" in
+    ''|*[!0-9]*) echo "" ;;
+    *) echo "$tid" ;;
+  esac
+}
+
+# Currently visible task, excluding Singularity. Fallback: Helper if present.
+front_task_id() {
+  line=$(cmd activity stack list 2>/dev/null | grep 'visible=true' | grep -v "$SINGULARITY_PKG" | head -n 1)
+  tid=$(task_id_from_line "$line")
+  if [ -n "$tid" ]; then
+    echo "$tid"
+    return 0
+  fi
+  helper_task_id
+}
+
+helper_task_id() {
+  line=$(cmd activity stack list 2>/dev/null | grep "$HELPER_PKG/$HELPER_PKG.MainActivity" | head -n 1)
+  task_id_from_line "$line"
+}
+
+restore_front_task() {
+  tid="$1"
+  case "$tid" in
+    ''|*[!0-9]*) tid=$(front_task_id) ;;
+  esac
+  if [ -n "$tid" ]; then
+    cmd activity task focus "$tid" >/dev/null 2>&1
+    return 0
+  fi
+  am start --activity-no-animation --activity-reorder-to-front --activity-single-top \
+    -n "$HELPER_PKG/.MainActivity" >/dev/null 2>&1
+}
+
+# am start returns before the UI is shown. Singularity then steals focus (~0.5s)
+# and can steal again during splash. Yank it back only while it is on top;
+# if the user switches to another app (or later to Singularity), leave it.
+hold_front_over_singularity() {
+  tid="$1"
+  restore_front_task "$tid"
+  n=0
+  while [ "$n" -lt 20 ]; do
+    top=$(cmd activity stack list 2>/dev/null | grep 'visible=true' | head -n 1)
+    echo "$top" | grep -q "$SINGULARITY_PKG"
+    if [ $? -eq 0 ]; then
+      echo "singularity-stole-focus restore=$tid $(date)" >&2
+      restore_front_task "$tid"
+    fi
+    n=$((n + 1))
+    sleep 0.25
+  done
 }
 
 helper_pid() {

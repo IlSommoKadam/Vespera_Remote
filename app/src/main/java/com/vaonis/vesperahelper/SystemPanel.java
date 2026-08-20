@@ -281,10 +281,9 @@ final class SystemPanel {
 
     private String photoSyncInfo(boolean enabled) {
         String schedule = activity.getString(R.string.system_photo_sync_info,
-                PhotoSyncStore.formatIntervalHours(syncStore.dayIntervalHours()),
+                PhotoSyncStore.formatIntervalHours(syncStore.nightIntervalHours()),
                 syncStore.dayStartHour(),
                 syncStore.dayEndHour(),
-                PhotoSyncStore.formatIntervalHours(syncStore.nightIntervalHours()),
                 formatClock(syncStore.nextAutoAt(System.currentTimeMillis())));
         String last;
         if (syncStore.lastAt() <= 0) {
@@ -313,7 +312,9 @@ final class SystemPanel {
 
     private String resumeSyncInfo(boolean enabled) {
         String body = activity.getString(R.string.system_resume_sync_info);
-        String state = syncStore.hasSuspendedWork(activity)
+        // Quick prefs/marker only: a full .part tree walk on a large USB HD
+        // ANRs the UI when opening this tab (and every 2s refresh).
+        String state = syncStore.hasSuspendedWorkQuick(activity)
                 ? activity.getString(R.string.system_resume_sync_pending)
                 : activity.getString(R.string.system_resume_sync_idle);
         return prefixed(enabled, body + "\n" + state);

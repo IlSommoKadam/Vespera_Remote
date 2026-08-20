@@ -743,7 +743,10 @@ final class TelescopePanel {
         }
         confirmAction(activity.getString(R.string.telescope_shutdown_title),
                 activity.getString(R.string.telescope_shutdown_message),
-                () -> runCommand(VesperaCommandClient.Command.SHUTDOWN));
+                () -> {
+                    commandResult.setText(activity.getString(R.string.telescope_shutdown_syncing));
+                    PhotoSyncService.syncThenShutdown(activity);
+                });
     }
 
     private void promptUploadSwu() {

@@ -211,7 +211,8 @@
     <string name="telescope_confirm_init">Initialize the telescope? Current date/time and observatory coordinates (Photos tab) will be sent.</string>
     <string name="telescope_confirm_init_site">Initialize the telescope with observatory “%1$s” (%2$s)?</string>
     <string name="telescope_shutdown_title">Power off telescope</string>
-    <string name="telescope_shutdown_message">Power off the Vespera? Wi‑Fi will drop and Helper will lose the connection.</string>
+    <string name="telescope_shutdown_message">USER photos are copied to the HD first, then the Vespera powers off. Wi‑Fi will drop and Helper will lose the connection.</string>
+    <string name="telescope_shutdown_syncing">Copying photos, then powering off…</string>
     <string name="status_tab_title">Vespera status</string>
     <string name="status_tab_infra">Infrastructure</string>
     <string name="status_tab_instrument">Instrument (REST API)</string>
@@ -294,13 +295,13 @@
     <string name="photo_hd_not_saved">No HD saved: after the first mount it will remount at startup.</string>
     <string name="photo_hd_saved">Saved HD: %1$s (id %2$s) — auto-remount at startup.</string>
     <string name="photo_hd_row_mounted">mounted</string>
-    <string name="photo_sync_idle">Waiting. During daytime and night, if Vespera and HD are ready, USER photos are copied, verified, then deleted on the instrument.</string>
+    <string name="photo_sync_idle">Waiting. At night, when Vespera comes online, and before power-off, if the HD is ready, USER photos are copied, verified, then deleted on the instrument.</string>
     <string name="photo_sync_window">@string/photo_sync_idle</string>
     <string name="photo_sync_interval_label">Every</string>
     <string name="photo_sync_interval_hint">2</string>
     <string name="photo_sync_interval_unit">hours</string>
     <string name="photo_sync_interval_apply">Apply</string>
-    <string name="photo_sync_interval_help">Automatic sync: day every %1$s h (%2$02d:00–%3$02d:00) and night every %4$s h (outside that range).</string>
+    <string name="photo_sync_interval_help">Automatic night sync every %1$s h. Daytime (%2$02d:00–%3$02d:00) has no schedule: it runs when Vespera comes online and once more before power-off.</string>
     <string name="photo_sync_night">Night sync active</string>
     <string name="photo_sync_need_hd">Mount the USB HD first.</string>
     <string name="photo_sync_need_wifi">The photos are on the Vespera: connect it from the Wi‑Fi tab, then retry.</string>
@@ -383,8 +384,8 @@
     <string name="photos_sync_need_hd">@string/photo_sync_need_hd</string>
     <string name="photos_sync_need_vespera">@string/photo_sync_need_wifi</string>
     <string name="photos_sync_night">night sync active</string>
-    <string name="photos_sync_next">Next automatic sync: %1$s (every %2$s h). Night ends at %3$s</string>
-    <string name="photos_sync_overdue">Automatic sync overdue (due at %1$s, every %2$s h). Night ends at %3$s</string>
+    <string name="photos_sync_next">Next night sync: %1$s (every %2$s h). Daytime when Vespera comes online. Night ends at %3$s</string>
+    <string name="photos_sync_overdue">Night sync overdue (due at %1$s, every %2$s h). Night ends at %3$s</string>
     <string name="photos_sync_file">@string/photo_sync_file</string>
     <string name="photos_sync_no_user">USER folder missing on the Vespera.</string>
     <string name="photos_sync_local_user">HD not writable: USB bind lost. Tap Mount or retry after restarting the daemon.</string>
@@ -444,7 +445,7 @@
     <string name="system_saved">Settings saved.</string>
     <string name="system_activity_off">Disabled.</string>
     <string name="system_photo_sync_title">Scheduled photo sync</string>
-    <string name="system_photo_sync_info">Daytime every %1$s h (%2$02d:00–%3$02d:00), nighttime every %4$s h. Next: %5$s.</string>
+    <string name="system_photo_sync_info">Night every %1$s h. Daytime (%2$02d:00–%3$02d:00) when Vespera comes online and before power-off. Next: %4$s.</string>
     <string name="system_photo_sync_last">Last sync: %1$s — %2$s</string>
     <string name="system_photo_sync_never">No sync yet.</string>
     <string name="system_photo_sync_paused">Paused by the user.</string>

@@ -323,7 +323,7 @@ public final class VesperaConnectionService extends Service {
         if (!STATUS_CONNECTED.equals(lastStatus)) return;
         Log.i(TAG, "starting Singularity after Vespera connect (background)");
         SystemActivityLog.record(this, SystemActivityLog.KIND_SINGULARITY, SystemActivityLog.DETAIL_OK);
-        // Daemon starts Singularity then restores VesperaHelper to the foreground.
+        // Daemon starts Singularity without taking the screen; UI only if the user opens it.
         requestSingularityStart(this);
     }
 
