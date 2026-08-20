@@ -184,6 +184,11 @@ public final class DaemonDisk {
         return parseMount(ack);
     }
 
+    /** Re-probe USB after SCSI eject so list/mount can see the disk again. */
+    public static String wake(Context context) {
+        return request(context, "wake-disk", DISKS_ACK, MOUNT_TIMEOUT_MS);
+    }
+
     public static MountStatus status(Context context) {
         String ack = request(context, "disk-status", MOUNT_ACK, LIST_TIMEOUT_MS);
         return parseMount(ack);

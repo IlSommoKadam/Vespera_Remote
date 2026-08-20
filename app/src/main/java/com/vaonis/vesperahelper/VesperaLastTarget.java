@@ -9,12 +9,15 @@ import org.json.JSONObject;
 final class VesperaLastTarget {
     private static volatile String bodyJson = "";
     private static volatile String label = "";
+    /** Multi-night / stored capture id for startObservationFromStoredCapture. */
+    private static volatile String storeId = "";
 
     private VesperaLastTarget() {}
 
     static void rememberFromStatus(JSONObject payload) {
         JSONObject operation = findOperation(payload);
         remember(targetOf(operation), operation, payload);
+        rememberStoreId(payload, operation);
     }
 
     /** Same target shown in the Telescopio status rows. */
@@ -37,6 +40,26 @@ final class VesperaLastTarget {
 
     static boolean hasTarget() {
         return bodyJson != null && !bodyJson.isEmpty();
+    }
+
+    static boolean hasStoreId() {
+        return storeId != null && !storeId.isEmpty();
+    }
+
+    static String storeId() {
+        return hasStoreId() ? storeId : "";
+    }
+
+    /** Body for Singularity multi-night resume API. */
+    static String storedCaptureBody() {
+        if (!hasStoreId()) return "";
+        try {
+            JSONObject body = new JSONObject();
+            body.put("storeId", storeId);
+            return body.toString();
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     static String startObservationBody() {
@@ -71,6 +94,15 @@ final class VesperaLastTarget {
             if (!hasNumber(body, "exposureMicroSec")) {
                 body.put("exposureMicroSec", 10_000_000L);
             }
+            // Advanced/mosaic startObservation also requires stacking params.
+            if (!body.has("histogramEnabled")) body.put("histogramEnabled", true);
+            if (!body.has("histogramLow")) body.put("histogramLow", -0.75);
+            if (!body.has("histogramMedium")) body.put("histogramMedium", 5);
+            if (!body.has("histogramHigh")) body.put("histogramHigh", 0);
+            if (!body.has("backgroundEnabled")) body.put("backgroundEnabled", true);
+            if (!body.has("backgroundPolyorder")) body.put("backgroundPolyorder", 2);
+            String sid = text(body, "storeId");
+            if (!sid.isEmpty()) storeId = sid;
             return body.toString();
         } catch (Exception ignored) {
             return raw;
@@ -129,7 +161,89 @@ final class VesperaLastTarget {
             copyCameraParams(body, operation);
         }
         copyCameraParams(body, src, target);
+        String sid = text(body, "storeId");
+        if (!sid.isEmpty()) storeId = sid;
         return body;
+    }
+
+    /**
+     * Keep multi-night {@code storeId} even after auto-init clears
+     * {@code previousOperations.observation} (Singularity resumes via captureStore).
+     */
+    private static void rememberStoreId(JSONObject payload, JSONObject operation) {
+        String fromOp = storeIdOf(operation);
+        if (!fromOp.isEmpty() && isResumableStore(operation)) {
+            storeId = fromOp;
+            return;
+        }
+        if (!fromOp.isEmpty() && storeId.isEmpty()) storeId = fromOp;
+        if (payload == null) return;
+        JSONObject chosen = preferredStoredCapture(payload);
+        if (chosen == null) return;
+        String fromStore = text(chosen, "storeId");
+        if (!fromStore.isEmpty()) {
+            // Prefer an existing remembered id if still present; else latest capture.
+            if (storeId.isEmpty() || storeId.equals(fromStore)
+                    || findStoredCapture(payload, storeId) == null) {
+                storeId = fromStore;
+            }
+            if (!hasTarget()) {
+                remember(chosen.optJSONObject("target"), chosen, payload);
+            }
+        }
+    }
+
+    private static String storeIdOf(JSONObject operation) {
+        if (operation == null) return "";
+        JSONObject store = operation.optJSONObject("store");
+        String direct = text(store, "storeId");
+        if (!direct.isEmpty()) return direct;
+        return text(operation, "storeId");
+    }
+
+    private static boolean isResumableStore(JSONObject operation) {
+        if (operation == null) return false;
+        JSONObject store = operation.optJSONObject("store");
+        String state = text(store, "state").toUpperCase(java.util.Locale.US);
+        if (state.isEmpty()) state = text(operation, "storeState").toUpperCase(java.util.Locale.US);
+        return state.contains("TO_BE_RESUMABLE")
+                || "RESUME".equals(state)
+                || (state.contains("RESUMABLE") && !state.contains("NON_"));
+    }
+
+    private static JSONObject preferredStoredCapture(JSONObject payload) {
+        if (!storeId.isEmpty()) {
+            JSONObject match = findStoredCapture(payload, storeId);
+            if (match != null) return match;
+        }
+        JSONObject store = payload.optJSONObject("captureStore");
+        if (store == null) {
+            JSONObject nested = payload.optJSONObject("result");
+            if (nested == null) nested = payload.optJSONObject("data");
+            store = nested == null ? null : nested.optJSONObject("captureStore");
+        }
+        if (store == null) return null;
+        JSONArray captures = store.optJSONArray("storedCaptures");
+        if (captures == null || captures.length() == 0) return null;
+        return captures.optJSONObject(captures.length() - 1);
+    }
+
+    private static JSONObject findStoredCapture(JSONObject payload, String id) {
+        if (payload == null || id == null || id.isEmpty()) return null;
+        JSONObject store = payload.optJSONObject("captureStore");
+        if (store == null) {
+            JSONObject nested = payload.optJSONObject("result");
+            if (nested == null) nested = payload.optJSONObject("data");
+            store = nested == null ? null : nested.optJSONObject("captureStore");
+        }
+        if (store == null) return null;
+        JSONArray captures = store.optJSONArray("storedCaptures");
+        if (captures == null) return null;
+        for (int i = captures.length() - 1; i >= 0; i--) {
+            JSONObject item = captures.optJSONObject(i);
+            if (item != null && id.equals(text(item, "storeId"))) return item;
+        }
+        return null;
     }
 
     private static void copyCameraParams(JSONObject body, JSONObject... sources) {

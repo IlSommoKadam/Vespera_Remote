@@ -242,6 +242,9 @@ final class SystemPanel {
         if (SystemActivityLog.KIND_HD_MOUNT.equals(kind)) {
             return activity.getString(R.string.system_hd_mount_title);
         }
+        if (SystemActivityLog.KIND_HD_POWER_OFF.equals(kind)) {
+            return activity.getString(R.string.system_hd_power_off_title);
+        }
         if (SystemActivityLog.KIND_CLOCK_NTP.equals(kind)) {
             return activity.getString(R.string.system_clock_title);
         }

@@ -41,6 +41,16 @@ L'app mantiene una richiesta Wi-Fi generica e chiede al daemon root `tools/vespe
 | 0.6.21 | 68 | Un solo daemon (init, niente secondo wrapper); restart senza smontare l’HD; bind ripristinato se manca; sync foto automatica 24h ogni 2 h |
 | 0.6.22 | 69 | Tab **Stato**: infrastruttura (Wi‑Fi, API, FTP, Singularity) + lettura REST `/v1`/`/v2/app/status` con aggiornamento ogni 15 s |
 | 0.6.25 | 72 | Tab **Telescopio** + inventario porte fase 1; auto-refresh stato solo con tab Telescopio attiva |
+| 0.6.70 | 117 | HD spento all’avvio se Vespera offline e allo spegnimento telescopio; **Attiva HD** / Monta a mano; rimontaggio auto quando online |
+| 0.6.71 | 118 | Spegnimento HD reale: umount fuse ghost + USB `authorized=0`; stati Attiva/Montato coerenti |
+| 0.6.72 | 119 | All’avvio non riaccende più l’HD via Aggiorna/list: wake solo su Attiva/Monta |
+| 0.6.73 | 120 | All’avvio spegne sempre l’HD; rimonta solo se API/FTP Vespera rispondono (non basta il Wi‑Fi) |
+| 0.6.74 | 121 | Spegnimento HD una sola volta per processo; Attiva HD non viene più annullata dai BOOTSTRAP successivi |
+| 0.6.75 | 122 | Apertura MainActivity spegne sempre l’HD se telescopio silenzioso (anche con FGS già attivo) |
+| 0.6.76 | 123 | singleTask: anche onNewIntent (riapertura da launcher) riesegue la policy spegnimento HD |
+| 0.6.79 | 126 | Riprendi osservazione multi-night via `captureStore/startObservationFromStoredCapture` + storeId |
+| 0.6.80 | 127 | Riprendi fa auto-init se serve; Inizializza disabilitato se già init o in osservazione/ripresa |
+| 0.6.81 | 128 | Inizializza disabilitato se già inizializzato o in tracking |
 
 Il daemon deve essere avviato come root sul Pi dopo il boot; l'app comunica con esso tramite `net.req` / `disk.req` nella propria directory esterna.
 

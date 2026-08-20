@@ -19,6 +19,7 @@ final class SystemActivityLog {
     static final String KIND_RESUME_SYNC = "resume_sync";
     static final String KIND_SUN_TOO_HIGH = "sun_too_high";
     static final String KIND_HD_MOUNT = "hd_mount";
+    static final String KIND_HD_POWER_OFF = "hd_power_off";
     static final String KIND_CLOCK_NTP = "clock_ntp";
     static final String KIND_BOOT = "boot_start";
     static final String KIND_WIFI = "wifi_connect";

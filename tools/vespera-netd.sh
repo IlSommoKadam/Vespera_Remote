@@ -35,6 +35,7 @@ PROBE_REQ="$REQ_DIR/probe.req"
 PROBE_ACK="$REQ_DIR/probe.ack"
 HD_MOUNT="/mnt/vespera-hd"
 HD_STATE="/data/local/tmp/vespera-hd.state"
+HD_USB_STATE="/data/local/tmp/vespera-hd-usb"
 NTFS_DIR="/data/local/tmp/ntfs"
 NTFS_BIN="$NTFS_DIR/mount.ntfs"
 TABLE=94
@@ -419,6 +420,12 @@ mount_disk() {
   fi
   dev=$(resolve_block_dev "$spec")
   if [ -z "$dev" ]; then
+    # After eject (SCSI delete) the block node is gone until USB is re-probed.
+    wake_disk
+    sleep 1
+    dev=$(resolve_block_dev "$spec")
+  fi
+  if [ -z "$dev" ]; then
     write_mount_ack "mount-missing $spec"
     write_ack "mount-missing $spec"
     return 1
@@ -472,6 +479,7 @@ mount_disk() {
   [ -z "$uuid" ] && uuid="-"
   [ -z "$label" ] && label="-"
   save_hd_state "$dev" "$uuid" "$label" "$target" "$bind" "$owned"
+  save_hd_usb "$(usb_parent_of_block "$dev")"
   write_mount_ack "mounted|$uuid|$label|$dev|$bind"
   write_ack "mount-ok $dev $bind"
 }
@@ -525,6 +533,30 @@ scsi_parent() {
   fi
 }
 
+# Walk from a block device up to the USB device that has "authorized".
+usb_parent_of_block() {
+  name=$(basename "$1")
+  parent=$(scsi_parent "$1")
+  [ -z "$parent" ] && parent="$name"
+  path=$(readlink -f "/sys/block/$parent/device" 2>/dev/null)
+  [ -z "$path" ] && path=$(readlink -f "/sys/class/block/$parent/device" 2>/dev/null)
+  while [ -n "$path" ] && [ "$path" != "/" ]; do
+    if [ -f "$path/idVendor" ] && [ -f "$path/authorized" ]; then
+      echo "$path"
+      return 0
+    fi
+    path=$(dirname "$path")
+  done
+  return 1
+}
+
+save_hd_usb() {
+  usb="$1"
+  if [ -n "$usb" ] && [ -f "$usb/authorized" ]; then
+    echo "$usb" > "$HD_USB_STATE"
+  fi
+}
+
 eject_dev() {
   [ -z "$1" ] && return 0
   parent=$(scsi_parent "$1")
@@ -535,6 +567,75 @@ eject_dev() {
   elif [ -e "/sys/class/block/$parent/device/delete" ]; then
     echo 1 > "/sys/class/block/$parent/device/delete" 2>/dev/null
   fi
+}
+
+# Re-authorize the USB mass-storage device after SCSI delete so Monta can find it again.
+wake_disk() {
+  usb=""
+  if [ -f "$HD_USB_STATE" ]; then
+    usb=$(cat "$HD_USB_STATE" 2>/dev/null)
+  fi
+  if [ -n "$usb" ] && [ -f "$usb/authorized" ]; then
+    echo 0 > "$usb/authorized" 2>/dev/null
+    sleep 1
+    echo 1 > "$usb/authorized" 2>/dev/null
+    sleep 3
+  else
+    for host in /sys/class/scsi_host/host*; do
+      [ -e "$host/scan" ] || continue
+      echo "- - -" > "$host/scan" 2>/dev/null
+    done
+    sleep 2
+  fi
+  write_ack "wake-disk-ok $(date)"
+}
+
+# Cut USB power/enumeration so the enclosure can spin down.
+usb_power_off() {
+  usb=""
+  if [ -f "$HD_USB_STATE" ]; then
+    usb=$(cat "$HD_USB_STATE" 2>/dev/null)
+  fi
+  if [ -z "$usb" ] && [ -n "$1" ]; then
+    usb=$(usb_parent_of_block "$1")
+  fi
+  if [ -n "$usb" ] && [ -f "$usb/authorized" ]; then
+    save_hd_usb "$usb"
+    echo 0 > "$usb/authorized" 2>/dev/null
+    return 0
+  fi
+  return 1
+}
+
+# Drop every leftover HD mount (incl. NTFS fuse ghosts after SCSI delete).
+flush_hd_mounts() {
+  bind=$(photos_dir)
+  state_mnt=""
+  if [ -f "$HD_STATE" ]; then
+    state_bind=$(grep '^BIND=' "$HD_STATE" | cut -d= -f2)
+    state_mnt=$(grep '^MOUNT=' "$HD_STATE" | cut -d= -f2)
+    [ -n "$state_bind" ] && bind="$state_bind"
+  fi
+  sync
+  umount "$bind" 2>/dev/null || umount -l "$bind" 2>/dev/null
+  umount "$HD_MOUNT" 2>/dev/null || umount -l "$HD_MOUNT" 2>/dev/null
+  [ -n "$state_mnt" ] && { umount "$state_mnt" 2>/dev/null || umount -l "$state_mnt" 2>/dev/null; }
+  # Any remaining vespera-photos / vespera-hd mounts (pass_through, ghosts).
+  awk '
+    $2 ~ /vespera-photos$/ || $2 == "/mnt/vespera-hd" || $1 ~ /\/sda[0-9]*$/ { print $2 }
+  ' /proc/mounts 2>/dev/null | while read -r mp; do
+    [ -n "$mp" ] || continue
+    umount "$mp" 2>/dev/null || umount -l "$mp" 2>/dev/null
+  done
+  sync
+}
+
+# Device currently backing the HD mount, even if HD_STATE was cleared.
+mounted_hd_dev() {
+  awk '
+    $2 == "/mnt/vespera-hd" { print $1; exit }
+    $2 ~ /vespera-photos$/ { print $1; exit }
+  ' /proc/mounts 2>/dev/null
 }
 
 umount_all_of() {
@@ -611,32 +712,53 @@ eject_disk() {
     dev=$(resolve_block_dev "$spec")
   fi
   if [ -z "$dev" ]; then
-    write_mount_ack "eject-missing"
-    write_ack "eject-missing"
+    dev=$(mounted_hd_dev)
+  fi
+  # Remember USB path before we tear the block device down.
+  if [ -n "$dev" ]; then
+    save_hd_usb "$(usb_parent_of_block "$dev")"
+  elif [ -f "$HD_USB_STATE" ]; then
+    :
+  fi
+
+  # 1) Always flush mounts first (NTFS fuse ghosts keep the disk "on" in the UI).
+  flush_hd_mounts
+  [ -n "$dev" ] && umount_all_of "$dev"
+  [ -n "$state_mnt" ] && { umount "$state_mnt" 2>/dev/null || umount -l "$state_mnt" 2>/dev/null; }
+  sync
+
+  # 2) SCSI delete if the block node is still visible.
+  if [ -n "$dev" ]; then
+    eject_dev "$dev"
+    parent=$(scsi_parent "$dev")
+    still=$(ls -d /sys/block/"$parent" 2>/dev/null)
+    if [ -n "$still" ]; then
+      flush_hd_mounts
+      umount_all_of "$dev"
+      sync
+      eject_dev "$dev"
+      still=$(ls -d /sys/block/"$parent" 2>/dev/null)
+    fi
+  else
+    still=""
+  fi
+
+  # 3) Cut USB authorization so the enclosure can spin down.
+  usb_power_off "$dev"
+  clear_hd_state
+
+  if path_mounted "$bind" || path_mounted "$HD_MOUNT"; then
+    write_mount_ack "eject-busy ${dev:-?}"
+    write_ack "eject-busy ${dev:-?} mounts-remain"
     return 1
   fi
-  # Prefer disconnect without a prior Smonta. If the kernel reports busy, flush mounts then retry.
-  sync
-  eject_dev "$dev"
-  parent=$(scsi_parent "$dev")
-  still=$(ls -d /sys/block/"$parent" 2>/dev/null)
-  if [ -n "$still" ]; then
-    umount "$bind" 2>/dev/null || umount -l "$bind" 2>/dev/null
-    umount "$HD_MOUNT" 2>/dev/null || umount -l "$HD_MOUNT" 2>/dev/null
-    [ -n "$state_mnt" ] && umount "$state_mnt" 2>/dev/null
-    umount_all_of "$dev"
-    sync
-    eject_dev "$dev"
-    still=$(ls -d /sys/block/"$parent" 2>/dev/null)
-  fi
-  clear_hd_state
   if [ -n "$still" ]; then
     write_mount_ack "eject-busy $dev"
     write_ack "eject-busy $dev"
     return 1
   fi
-  write_mount_ack "ejected|$dev"
-  write_ack "eject-ok $dev $(date)"
+  write_mount_ack "ejected|${dev:-usb}"
+  write_ack "eject-ok ${dev:-usb} $(date)"
 }
 
 disk_status() {
@@ -715,7 +837,18 @@ set_clock() {
 }
 
 write_ack "vespera-netd started $(date)"
-auto_mount_from_state
+# Do not remount at daemon start: Helper powers the HD off while Vespera is
+# offline and mounts again when the telescope comes online (or via Monta).
+power_off_hd_at_boot() {
+  # Always tear down leftover mounts + USB power, even without HD_STATE.
+  spec=""
+  if [ -f "$HD_STATE" ]; then
+    spec=$(grep '^UUID=' "$HD_STATE" | cut -d= -f2)
+    [ -z "$spec" ] || [ "$spec" = "-" ] && spec=$(grep '^DEV=' "$HD_STATE" | cut -d= -f2)
+  fi
+  eject_disk "$spec"
+}
+power_off_hd_at_boot
 
 handle_cmd() {
   line="$1"
@@ -744,6 +877,7 @@ handle_cmd() {
     mount-disk) mount_disk "$a" ;;
     umount-disk) umount_disk "$a" ;;
     eject-disk) eject_disk "$a" ;;
+    wake-disk) wake_disk; list_disks ;;
     ensure-bind) ensure_photos_bind; disk_status ;;
     disk-status) disk_status ;;
     auto-mount) auto_mount_from_state ;;

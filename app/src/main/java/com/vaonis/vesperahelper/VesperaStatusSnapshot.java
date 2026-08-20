@@ -134,6 +134,7 @@ final class VesperaStatusSnapshot {
     boolean canResumeObservation() {
         if (isObserving()) return false;
         if ("STOPPED".equals(observationStatus)) return true;
+        if (VesperaLastTarget.hasStoreId()) return true;
         return VesperaLastTarget.hasTarget();
     }
 

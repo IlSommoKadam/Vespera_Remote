@@ -182,7 +182,14 @@ public final class MainActivity extends Activity {
         deviceStore = VesperaDeviceStore.from(this);
         buildUi();
         refreshConfiguredDeviceLabel();
-        PhotoSyncService.ensure(this);
+        PhotoSyncService.onAppOpened(this);
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        // singleTask: reopening from launcher skips onCreate — still power off HD if offline.
+        PhotoSyncService.onAppOpened(this);
     }
 
     private void buildUi() {

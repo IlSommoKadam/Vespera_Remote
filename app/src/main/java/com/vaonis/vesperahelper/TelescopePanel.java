@@ -85,6 +85,8 @@ final class TelescopePanel {
     private long lastPhotoUsageAt;
     private boolean photoUsageForceOnOpen;
     private boolean photoUsageChecking;
+    /** Cursor used by {@link #addStatusRow} to update statusBox children in place. */
+    private int statusRowCursor;
 
     TelescopePanel(Activity activity, float density, int padding) {
         this.activity = activity;
@@ -318,8 +320,7 @@ final class TelescopePanel {
         setStatusSnapshot(snapshot,
                 activity.getString(R.string.status_tab_last_update, when)
                         + " · " + activity.getString(R.string.status_tab_live));
-        scroll.pin();
-        updateObservationButtons(snapshot.isObserving());
+        scroll.runKeepingScroll(() -> updateObservationButtons(snapshot.isObserving()));
     }
 
     private void refreshStatusNow(boolean userInitiated) {
@@ -358,7 +359,6 @@ final class TelescopePanel {
                     if (result.snapshot != null) lastSnap = result.snapshot;
                     return;
                 }
-                scroll.pin();
                 String when = DateFormat.getTimeInstance(DateFormat.MEDIUM, Locale.getDefault())
                         .format(new Date());
                 if (result.snapshot == null) {
@@ -367,7 +367,8 @@ final class TelescopePanel {
                 } else {
                     setStatusSnapshot(result.snapshot,
                             activity.getString(R.string.status_tab_last_update, when));
-                    updateObservationButtons(result.snapshot.isObserving());
+                    scroll.runKeepingScroll(
+                            () -> updateObservationButtons(result.snapshot.isObserving()));
                 }
             });
         });
@@ -385,14 +386,18 @@ final class TelescopePanel {
     private void refillStatusKeepingScroll() {
         if (!visible || lastSnap == null) return;
         scroll.runKeepingScroll(() -> {
-            statusBox.removeAllViews();
+            statusRowCursor = 0;
             fillStatusRows(lastSnap);
+            while (statusBox.getChildCount() > statusRowCursor) {
+                statusBox.removeViewAt(statusBox.getChildCount() - 1);
+            }
         });
     }
 
     private void setStatusMessage(String status, String updated) {
         scroll.runKeepingScroll(() -> {
             statusBox.removeAllViews();
+            statusRowCursor = 0;
             addStatusMessage(status == null ? "—" : status);
             if (updated != null) lastUpdate.setText(updated);
         });
@@ -548,6 +553,25 @@ final class TelescopePanel {
 
     private void addStatusRow(String label, String value) {
         if (value == null || value.isEmpty()) return;
+        // Reuse an existing row when possible so live status updates do not
+        // collapse the ScrollView height (which jumps scrollY back to top).
+        if (statusRowCursor < statusBox.getChildCount()) {
+            View child = statusBox.getChildAt(statusRowCursor);
+            if (child instanceof LinearLayout) {
+                LinearLayout row = (LinearLayout) child;
+                if (row.getChildCount() >= 3
+                        && row.getChildAt(0) instanceof TextView
+                        && row.getChildAt(2) instanceof TextView) {
+                    ((TextView) row.getChildAt(0)).setText(label);
+                    ((TextView) row.getChildAt(2)).setText(value);
+                    statusRowCursor++;
+                    return;
+                }
+            }
+            while (statusBox.getChildCount() > statusRowCursor) {
+                statusBox.removeViewAt(statusBox.getChildCount() - 1);
+            }
+        }
         LinearLayout row = new LinearLayout(activity);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -580,6 +604,7 @@ final class TelescopePanel {
         row.addView(colon);
         row.addView(state);
         statusBox.addView(row);
+        statusRowCursor++;
     }
 
     private void addStatusMessage(String message) {
@@ -613,24 +638,32 @@ final class TelescopePanel {
         final VesperaStatusSnapshot snap = lastSnap;
         worker.execute(() -> {
             VesperaLocationClient.Site initSite = null;
-            if (command == VesperaCommandClient.Command.INIT) {
+            boolean needsSite = command == VesperaCommandClient.Command.INIT
+                    || (command == VesperaCommandClient.Command.RESUME
+                    && (snap == null || !snap.initialized));
+            if (needsSite) {
                 initSite = resolveInitSite(network, snap);
                 if (initSite == null) {
                     mainHandler.post(() -> {
                         scroll.pin();
                         commandInFlight.set(false);
-                        setCommandsEnabled(true);
+                        applyCommandEnablement(true);
                         commandResult.setText(activity.getString(R.string.telescope_command_no_site));
                     });
                     return;
                 }
+            }
+            if (command == VesperaCommandClient.Command.RESUME
+                    && (snap == null || !snap.initialized)) {
+                mainHandler.post(() -> commandResult.setText(
+                        activity.getString(R.string.telescope_command_resume_initing)));
             }
             VesperaCommandClient.Result result = VesperaCommandClient.send(
                     fetchHost, fetchPort, network, command, initSite);
             mainHandler.post(() -> {
                 scroll.pin();
                 commandInFlight.set(false);
-                setCommandsEnabled(true);
+                applyCommandEnablement(true);
                 if (result.success) {
                     if (command == VesperaCommandClient.Command.SHUTDOWN) {
                         commandResult.setText(activity.getString(
@@ -662,6 +695,11 @@ final class TelescopePanel {
                     commandResult.setText(activity.getString(R.string.telescope_command_no_target));
                 } else if ("no_site".equals(result.message)) {
                     commandResult.setText(activity.getString(R.string.telescope_command_no_site));
+                } else if ("init_timeout".equals(result.message)
+                        || "init_not_ready".equals(result.message)
+                        || result.message.startsWith("init_failed")) {
+                    commandResult.setText(activity.getString(
+                            R.string.telescope_command_init_before_resume_fail, result.message));
                 } else {
                     commandResult.setText(activity.getString(
                             R.string.telescope_command_fail, label(command), result.message));
@@ -689,19 +727,35 @@ final class TelescopePanel {
     }
 
     private void setCommandsEnabled(boolean enabled) {
+        applyCommandEnablement(enabled);
+    }
+
+    /** Enable/disable command buttons; Init stays off if already init or observing. */
+    private void applyCommandEnablement(boolean enabled) {
         boolean busy = commandInFlight.get();
         boolean on = enabled && !busy;
         cmdPark.setEnabled(on);
         cmdStop.setEnabled(on);
         cmdResume.setEnabled(on);
-        cmdInit.setEnabled(on);
         cmdShutdown.setEnabled(on);
         cmdUploadSwu.setEnabled(on);
+        cmdInit.setEnabled(on && canClickInit());
+    }
+
+    /** Init only when not initialized and not tracking. */
+    private boolean canClickInit() {
+        VesperaStatusSnapshot snap = lastSnap;
+        if (snap == null) return true;
+        if (snap.initialized) return false;
+        if ("ON".equals(snap.tracking) || "STARTING".equals(snap.tracking)) return false;
+        if (snap.isObserving() || snap.isTrackingAcquisition()) return false;
+        return true;
     }
 
     private void updateObservationButtons(boolean observing) {
         cmdStop.setVisibility(observing ? View.VISIBLE : View.GONE);
         cmdResume.setVisibility(observing ? View.GONE : View.VISIBLE);
+        cmdInit.setEnabled(!commandInFlight.get() && canClickInit());
     }
 
     private void confirmRefresh() {
@@ -713,6 +767,10 @@ final class TelescopePanel {
     private void confirmCommand(VesperaCommandClient.Command command) {
         if (!isConnected()) {
             commandResult.setText(activity.getString(R.string.status_tab_need_wifi));
+            return;
+        }
+        if (command == VesperaCommandClient.Command.INIT && !canClickInit()) {
+            commandResult.setText(activity.getString(R.string.telescope_command_init_unavailable));
             return;
         }
         String message;
@@ -730,6 +788,9 @@ final class TelescopePanel {
             } else {
                 message = activity.getString(R.string.telescope_confirm_init);
             }
+        } else if (command == VesperaCommandClient.Command.RESUME
+                && (lastSnap == null || !lastSnap.initialized)) {
+            message = activity.getString(R.string.telescope_confirm_resume_with_init);
         } else {
             message = activity.getString(confirmMessage(command));
         }

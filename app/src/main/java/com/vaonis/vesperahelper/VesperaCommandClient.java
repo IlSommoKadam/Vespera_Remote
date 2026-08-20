@@ -11,6 +11,8 @@ import org.json.JSONObject;
 final class VesperaCommandClient {
     private static final String TAG = "VesperaCmd";
     private static final int TIMEOUT_MS = 8_000;
+    private static final long INIT_WAIT_MS = 180_000L;
+    private static final long INIT_POLL_MS = 4_000L;
 
     enum Command {
         PARK("/v1/general/park"),
@@ -58,12 +60,36 @@ final class VesperaCommandClient {
         if (!snap.canSignCommands()) {
             return new Result(false, -1, snap.authMissingCode());
         }
+
+        // Riprendi: se non inizializzato, auto-init + attesa, poi resume.
+        if (command == Command.RESUME && !snap.initialized) {
+            Result init = ensureInitialized(host, port, network, snap, initSite);
+            if (!init.success) return init;
+            status = VesperaStatusClient.fetchResult(host, port, network);
+            snap = status.snapshot;
+            if (snap == null || !snap.canSignCommands()) {
+                return new Result(false, -1, "status_unavailable: after_init");
+            }
+            if (!snap.initialized) {
+                return new Result(false, -1, "init_not_ready");
+            }
+        }
+
         String body = "{}";
         boolean haveTarget = false;
+        boolean fromStoredCapture = false;
         if (command == Command.RESUME) {
-            body = VesperaLastTarget.startObservationBody(snap);
-            haveTarget = VesperaLastTarget.hasTarget() && !body.isEmpty();
-            if (!haveTarget) body = "{\"resume\":true}";
+            // Multi-night / PerseverENS: Singularity uses captureStore API + storeId.
+            String stored = VesperaLastTarget.storedCaptureBody();
+            if (!stored.isEmpty()) {
+                body = stored;
+                fromStoredCapture = true;
+                haveTarget = true;
+            } else {
+                body = VesperaLastTarget.startObservationBody(snap);
+                haveTarget = VesperaLastTarget.hasTarget() && !body.isEmpty();
+                if (!haveTarget) body = "{\"resume\":true}";
+            }
         } else if (command == Command.INIT) {
             body = autoInitBody(initSite);
             if (body.isEmpty()) {
@@ -82,6 +108,12 @@ final class VesperaCommandClient {
                     "/v1/general/powerOff",
                     "/v1/device/shutdown"
             };
+        } else if (command == Command.RESUME && fromStoredCapture) {
+            paths = new String[] {
+                    "/v1/captureStore/startObservationFromStoredCapture",
+                    command.path,
+                    "/v1/general/resumeObservation"
+            };
         } else if (command == Command.RESUME) {
             paths = new String[] { command.path, "/v1/general/resumeObservation" };
         } else {
@@ -91,8 +123,15 @@ final class VesperaCommandClient {
         try {
             for (String path : paths) {
                 boolean shutdown = command == Command.SHUTDOWN;
+                String postBody = body;
+                if (command == Command.RESUME && fromStoredCapture
+                        && !path.contains("FromStoredCapture")) {
+                    // Fallback paths need the full startObservation payload.
+                    String full = VesperaLastTarget.startObservationBody(snap);
+                    if (!full.isEmpty()) postBody = full;
+                }
                 VesperaHttp.Response response = VesperaHttp.post(
-                        network, host, port, path, body, authorization, TIMEOUT_MS, shutdown);
+                        network, host, port, path, postBody, authorization, TIMEOUT_MS, shutdown);
                 if (shutdown && response.code == 0) {
                     return new Result(true, 0, "shutdown_started");
                 }
@@ -124,6 +163,116 @@ final class VesperaCommandClient {
             }
             return new Result(false, -1, failure.getMessage());
         }
+    }
+
+    /**
+     * Starts auto-init if needed and waits until {@code initialized} or failure/timeout.
+     */
+    private static Result ensureInitialized(String host, int port, Network network,
+            VesperaStatusSnapshot snap, VesperaLocationClient.Site initSite) {
+        if (snap != null && snap.initialized) {
+            return new Result(true, 200, "already_initialized");
+        }
+        String body = autoInitBody(initSite);
+        if (body.isEmpty()) {
+            return new Result(false, -1, "no_site");
+        }
+        if (!isAutoInitRunning(snap)) {
+            String authorization = VesperaApiAuth.authorizationHeader(snap);
+            if (authorization.isEmpty()) {
+                return new Result(false, -1, "auth_sign_failed");
+            }
+            try {
+                VesperaHttp.Response response = VesperaHttp.post(
+                        network, host, port, Command.INIT.path, body, authorization, TIMEOUT_MS, false);
+                boolean ok = response.code >= 200 && response.code < 300
+                        && !isFirmwareFailure(response.body);
+                if (!ok && response.code != 0) {
+                    // code 0 can happen with odd proxies; still poll status
+                    if (response.code == 401) {
+                        return new Result(false, 401, "auth_required");
+                    }
+                    if (response.code > 0 && !isAutoInitAccepted(response)) {
+                        String msg = response.body.isEmpty()
+                                ? ("HTTP " + response.code) : truncate(response.body, 400);
+                        return new Result(false, response.code, msg);
+                    }
+                }
+                Log.i(TAG, "auto-init started before resume");
+            } catch (Exception failure) {
+                Log.w(TAG, "auto-init: " + failure.getMessage());
+                // Continue polling — init may still have been accepted.
+            }
+        }
+        long deadline = System.currentTimeMillis() + INIT_WAIT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(INIT_POLL_MS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return new Result(false, -1, "init_interrupted");
+            }
+            VesperaStatusClient.Result status = VesperaStatusClient.fetchResult(host, port, network);
+            VesperaStatusSnapshot now = status.snapshot;
+            if (now == null) continue;
+            if (now.initialized) {
+                Log.i(TAG, "auto-init complete, resuming observation");
+                return new Result(true, 200, "init_ok");
+            }
+            String fail = autoInitError(now);
+            if (!fail.isEmpty()) {
+                return new Result(false, -1, "init_failed: " + fail);
+            }
+        }
+        return new Result(false, -1, "init_timeout");
+    }
+
+    private static boolean isAutoInitAccepted(VesperaHttp.Response response) {
+        if (response == null) return false;
+        if (response.code >= 200 && response.code < 300) return true;
+        // Some firmwares return empty body on accept.
+        return response.code == 0;
+    }
+
+    private static boolean isAutoInitRunning(VesperaStatusSnapshot snap) {
+        if (snap == null) return false;
+        String type = (snap.operationType == null ? "" : snap.operationType).toUpperCase(
+                java.util.Locale.US);
+        if (type.contains("AUTO_INIT") || type.contains("INIT")) {
+            return !"STOPPED".equalsIgnoreCase(snap.observationStatus)
+                    && (snap.error == null || snap.error.isEmpty());
+        }
+        String blob = (snap.step + " " + snap.state + " " + snap.rawJson).toUpperCase(
+                java.util.Locale.US);
+        return blob.contains("\"TYPE\":\"AUTO_INIT\"") && blob.contains("\"STOPPED\":FALSE");
+    }
+
+    private static String autoInitError(VesperaStatusSnapshot snap) {
+        if (snap == null) return "";
+        String raw = snap.rawJson == null ? "" : snap.rawJson;
+        int idx = raw.indexOf("\"autoInit\"");
+        if (idx < 0) idx = raw.indexOf("AUTO_INIT");
+        if (idx < 0) {
+            String type = snap.operationType == null ? "" : snap.operationType.toUpperCase(
+                    java.util.Locale.US);
+            if (type.contains("AUTO_INIT") && snap.error != null && !snap.error.isEmpty()) {
+                return snap.error;
+            }
+            return "";
+        }
+        String slice = raw.substring(Math.max(0, idx), Math.min(raw.length(), idx + 800));
+        String upper = slice.toUpperCase(java.util.Locale.US);
+        if (upper.contains("\"STOPPED\":TRUE") && upper.contains("\"ERROR\"")
+                && !upper.contains("\"ERROR\":NULL")) {
+            int err = slice.indexOf("\"name\"");
+            if (err >= 0) {
+                int q1 = slice.indexOf('"', err + 6);
+                int q2 = slice.indexOf('"', q1 + 1);
+                if (q1 >= 0 && q2 > q1) return slice.substring(q1 + 1, q2);
+            }
+            return "AUTO_INIT_ERROR";
+        }
+        return "";
     }
 
     /**

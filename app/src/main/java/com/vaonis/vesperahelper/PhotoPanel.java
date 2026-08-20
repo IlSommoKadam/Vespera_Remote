@@ -37,6 +37,7 @@ final class PhotoPanel {
     private final Activity activity;
     private final float density;
     private final UsbDiskStore diskStore;
+    private final UsbHdStore hdStore;
     private final PhotoSyncStore syncStore;
     private final FixedScrollView scroll;
     private final TextView hdStatus;
@@ -84,6 +85,7 @@ final class PhotoPanel {
         this.activity = activity;
         this.density = density;
         this.diskStore = UsbDiskStore.from(activity);
+        this.hdStore = UsbHdStore.from(activity);
         this.syncStore = PhotoSyncStore.from(activity);
         this.selectedId = diskStore.getId();
 
@@ -110,13 +112,17 @@ final class PhotoPanel {
                         .setAction(PhotoSyncService.ACTION_LIST_DISKS)));
         mount = action(activity.getString(R.string.photo_btn_mount), COLOR_CONNECTED);
         mount.setOnClickListener(v -> {
-            if (selectedId == null || selectedId.isEmpty()) {
+            String spec = selectedId;
+            if (spec == null || spec.isEmpty()) spec = hdStore.getSpec();
+            if (spec == null || spec.isEmpty()) spec = diskStore.getId();
+            if (spec == null || spec.isEmpty()) {
                 hdStatus.setText(R.string.photo_hd_select_first);
                 return;
             }
+            selectedId = spec;
             activity.startForegroundService(new Intent(activity, PhotoSyncService.class)
                     .setAction(PhotoSyncService.ACTION_MOUNT)
-                    .putExtra(PhotoSyncService.EXTRA_DISK_ID, selectedId));
+                    .putExtra(PhotoSyncService.EXTRA_DISK_ID, spec));
         });
         unmount = action(activity.getString(R.string.photo_btn_unmount), COLOR_DANGER);
         unmount.setOnClickListener(v -> activity.startForegroundService(
@@ -124,10 +130,14 @@ final class PhotoPanel {
                         .setAction(PhotoSyncService.ACTION_UNMOUNT)));
         unmount.setVisibility(View.GONE);
         eject = action(activity.getString(R.string.photo_btn_eject), UiStyle.TERRACOTTA);
-        eject.setOnClickListener(v -> activity.startForegroundService(
-                new Intent(activity, PhotoSyncService.class)
-                        .setAction(PhotoSyncService.ACTION_EJECT)
-                        .putExtra(PhotoSyncService.EXTRA_DISK_ID, selectedId)));
+        eject.setOnClickListener(v -> {
+            String spec = selectedId;
+            if (spec == null || spec.isEmpty()) spec = hdStore.getSpec();
+            if (spec == null || spec.isEmpty()) spec = diskStore.getId();
+            activity.startForegroundService(new Intent(activity, PhotoSyncService.class)
+                    .setAction(PhotoSyncService.ACTION_EJECT)
+                    .putExtra(PhotoSyncService.EXTRA_DISK_ID, spec));
+        });
         ejectSafe = body(activity.getString(R.string.photo_hd_safe_to_remove));
         ejectSafe.setTypeface(ejectSafe.getTypeface(), android.graphics.Typeface.BOLD);
         ejectSafe.setTextColor(COLOR_CONNECTED);
@@ -533,6 +543,7 @@ final class PhotoPanel {
 
     private void refreshMountButtons() {
         boolean hasSelection = selectedId != null && !selectedId.isEmpty();
+        boolean hasSaved = hdStore.isConfigured() || !diskStore.getId().isEmpty();
         boolean hasListed = listedCount > 0;
         if (mounted) {
             mount.setVisibility(View.GONE);
@@ -540,17 +551,23 @@ final class PhotoPanel {
         } else {
             unmount.setVisibility(View.GONE);
             mount.setVisibility(View.VISIBLE);
-            boolean canMount = hasListed && hasSelection;
+            // After power-off/eject the list is empty: still allow Attiva/Monta on the saved HD.
+            boolean canMount = (hasListed && hasSelection) || hasSaved;
+            mount.setText(ejected
+                    ? activity.getString(R.string.photo_btn_activate)
+                    : activity.getString(R.string.photo_btn_mount));
             mount.setEnabled(canMount);
             UiStyle.applyRaised(mount, canMount ? COLOR_CONNECTED : COLOR_OFFLINE, canMount);
         }
-        // When the HD is ejected/disconnected, hide the "Scollega HD" button.
-        // The user should only see the "safe to remove" hint.
+        // When the HD is powered off, hide Spegni and show the hint + Attiva.
         boolean showSafe = ejected;
         eject.setVisibility(showSafe ? View.GONE : View.VISIBLE);
         ejectSafe.setVisibility(showSafe ? View.VISIBLE : View.GONE);
+        if (showSafe) {
+            ejectSafe.setText(activity.getString(R.string.photo_hd_powered_off_hint));
+        }
         if (!showSafe) {
-            boolean canEject = mounted || hasListed;
+            boolean canEject = mounted || hasListed || hasSaved;
             eject.setEnabled(canEject);
             UiStyle.applyRaised(eject, canEject ? UiStyle.TERRACOTTA : COLOR_OFFLINE, canEject);
         }

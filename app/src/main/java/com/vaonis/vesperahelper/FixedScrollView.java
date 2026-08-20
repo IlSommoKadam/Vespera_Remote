@@ -32,6 +32,12 @@ final class FixedScrollView extends ScrollView {
     }
 
     void pin() {
+        // While restoring after a content refresh, getScrollY() may already be
+        // clamped to 0; do not overwrite the saved position with that.
+        if (pinPasses > 0) {
+            post(this::applyPin);
+            return;
+        }
         restoreTo(getScrollX(), getScrollY());
     }
 
@@ -43,9 +49,10 @@ final class FixedScrollView extends ScrollView {
     }
 
     void runKeepingScroll(Runnable mutation) {
-        pin();
+        final int x = getScrollX();
+        final int y = getScrollY();
         mutation.run();
-        post(this::applyPin);
+        restoreTo(x, y);
     }
 
     private void applyPin() {
