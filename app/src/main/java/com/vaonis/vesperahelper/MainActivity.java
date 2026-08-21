@@ -1327,6 +1327,7 @@ public final class MainActivity extends Activity {
         refreshVesperaScan();
         if (photoPanel != null && currentTab == TAB_PHOTOS) photoPanel.onResume();
         if (telescopePanel != null) {
+            telescopePanel.onActivityResume();
             syncTelescopePanelHost();
             if (currentTab == TAB_TELESCOPE) {
                 telescopePanel.onVisible();

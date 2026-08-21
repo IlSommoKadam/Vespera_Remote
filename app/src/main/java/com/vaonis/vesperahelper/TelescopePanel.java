@@ -3,9 +3,12 @@ package com.vaonis.vesperahelper;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.database.Cursor;
 import android.net.Network;
 import android.net.Uri;
@@ -85,8 +88,16 @@ final class TelescopePanel {
     private long lastPhotoUsageAt;
     private boolean photoUsageForceOnOpen;
     private boolean photoUsageChecking;
+    private boolean photoStatusReceiverRegistered;
+    private boolean sawPhotoSyncing;
     /** Cursor used by {@link #addStatusRow} to update statusBox children in place. */
     private int statusRowCursor;
+    private final BroadcastReceiver photoStatusReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (intent == null) return;
+            applyPhotoSyncStatus(intent);
+        }
+    };
 
     TelescopePanel(Activity activity, float density, int padding) {
         this.activity = activity;
@@ -194,7 +205,12 @@ final class TelescopePanel {
     }
 
     void onAppPause() {
+        unregisterPhotoStatus();
         dismissPowerWarning(false);
+    }
+
+    void onActivityResume() {
+        registerPhotoStatus();
     }
 
     /** Fetch status and show the mains popup even if the Telescopio tab is not open. */
@@ -238,6 +254,7 @@ final class TelescopePanel {
 
     void shutdown() {
         visible = false;
+        unregisterPhotoStatus();
         stopLive();
         mainHandler.removeCallbacks(autoRefresh);
         worker.shutdownNow();
@@ -459,21 +476,23 @@ final class TelescopePanel {
     }
 
     private String storageLabel(VesperaStatusSnapshot snap) {
-        if (snap.storageUsedPercent >= PhotoSyncService.STORAGE_SYNC_PERCENT) {
-            String base = snap.storage.isEmpty()
-                    ? (snap.storageUsedPercent + "%") : snap.storage;
-            return activity.getString(R.string.status_tab_storage_full, base);
-        }
-        if (!snap.storage.isEmpty()) return snap.storage;
-        if (snap.storageUsedPercent >= 0) return snap.storageUsedPercent + "%";
         VesperaInternalStorage.Usage usage = VesperaInternalStorage.lastKnown();
         if (usage != null) photoUsage = usage;
-        if (photoUsage != null && !photoUsage.label.isEmpty()) {
-            if (photoUsage.usedPercent >= PhotoSyncService.STORAGE_SYNC_PERCENT) {
-                return activity.getString(R.string.status_tab_storage_full, photoUsage.label);
-            }
-            return photoUsage.label;
+        int percent = -1;
+        String label = "";
+        if (photoUsage != null) {
+            percent = photoUsage.usedPercent;
+            label = photoUsage.label;
+        } else if (snap.storageUsedPercent >= 0 || !snap.storage.isEmpty()) {
+            percent = snap.storageUsedPercent;
+            label = snap.storage;
         }
+        if (percent >= PhotoSyncService.STORAGE_SYNC_PERCENT) {
+            String base = label.isEmpty() ? (percent + "%") : label;
+            return activity.getString(R.string.status_tab_storage_full, base);
+        }
+        if (!label.isEmpty()) return label;
+        if (percent >= 0) return percent + "%";
         if (photoUsageChecking) {
             return activity.getString(R.string.status_tab_storage_checking);
         }
@@ -484,15 +503,54 @@ final class TelescopePanel {
         return "—";
     }
 
+    private void registerPhotoStatus() {
+        if (photoStatusReceiverRegistered) return;
+        IntentFilter filter = new IntentFilter(PhotoSyncService.ACTION_STATUS);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            activity.registerReceiver(photoStatusReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            activity.registerReceiver(photoStatusReceiver, filter);
+        }
+        photoStatusReceiverRegistered = true;
+    }
+
+    private void unregisterPhotoStatus() {
+        if (!photoStatusReceiverRegistered) return;
+        try {
+            activity.unregisterReceiver(photoStatusReceiver);
+        } catch (Exception ignored) {
+        }
+        photoStatusReceiverRegistered = false;
+    }
+
+    private void applyPhotoSyncStatus(Intent intent) {
+        boolean syncing = intent.getBooleanExtra(PhotoSyncService.EXTRA_SYNCING, false);
+        int percent = intent.getIntExtra(PhotoSyncService.EXTRA_STORAGE_PERCENT, -1);
+        String label = intent.getStringExtra(PhotoSyncService.EXTRA_STORAGE_LABEL);
+        boolean fromBroadcast = percent >= 0 && label != null && !label.isEmpty();
+        if (fromBroadcast) {
+            if (photoUsage == null || photoUsage.usedPercent != percent
+                    || !label.equals(photoUsage.label)) {
+                photoUsage = new VesperaInternalStorage.Usage(percent, label);
+                photoUsageChecking = false;
+                if (visible && lastSnap != null) refillStatusKeepingScroll();
+            }
+        } else if (sawPhotoSyncing && !syncing && lastSnap != null) {
+            photoUsageForceOnOpen = true;
+            lastPhotoUsageAt = 0;
+            maybeProbePhotoUsage(lastSnap);
+        }
+        sawPhotoSyncing = syncing;
+    }
+
     private void maybeProbePhotoUsage(VesperaStatusSnapshot snap) {
         if (!visible || snap == null || !isConnected()) return;
-        if (snap.storageUsedPercent >= 0 && !snap.storage.isEmpty()) {
-            photoUsageForceOnOpen = false;
+        boolean force = photoUsageForceOnOpen;
+        photoUsageForceOnOpen = false;
+        if (!force && snap.storageUsedPercent >= 0 && !snap.storage.isEmpty()) {
             photoUsageChecking = false;
             return;
         }
-        boolean force = photoUsageForceOnOpen;
-        photoUsageForceOnOpen = false;
         long now = System.currentTimeMillis();
         if (!force) {
             if (photoUsage != null || VesperaInternalStorage.lastKnown() != null) return;
@@ -524,8 +582,8 @@ final class TelescopePanel {
 
     private void maybeSyncIfStorageFull(VesperaStatusSnapshot snap) {
         if (!SystemSettingsStore.from(activity).storageSync()) return;
-        int percent = snap == null ? -1 : snap.storageUsedPercent;
-        if (percent < 0 && photoUsage != null) percent = photoUsage.usedPercent;
+        int percent = photoUsage != null ? photoUsage.usedPercent
+                : (snap == null ? -1 : snap.storageUsedPercent);
         if (percent < PhotoSyncService.STORAGE_SYNC_PERCENT) return;
         PhotoSyncService.syncIfStorageHigh(activity, percent);
     }

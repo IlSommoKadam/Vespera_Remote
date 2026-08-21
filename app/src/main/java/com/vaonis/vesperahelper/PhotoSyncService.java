@@ -78,6 +78,8 @@ public final class PhotoSyncService extends Service {
     public static final String EXTRA_SELECTED = "selected";
     public static final String EXTRA_SYNCING = "syncing";
     public static final String EXTRA_PAUSED = "paused";
+    public static final String EXTRA_STORAGE_PERCENT = "storage_percent";
+    public static final String EXTRA_STORAGE_LABEL = "storage_label";
 
     private static final String TAG = "VesperaPhotos";
     private static final int NOTIFICATION_ID = 43;
@@ -1250,9 +1252,33 @@ public final class PhotoSyncService extends Service {
             return;
         }
         Log.i(TAG, "internal storage " + usage.label);
+        publish();
         if (usage.usedPercent >= STORAGE_SYNC_PERCENT) {
             syncExecutor.execute(this::maybeSyncForFullStorage);
         }
+    }
+
+    /** Re-read Vespera /USER occupancy after an FTP copy/delete so Telescopio status stays current. */
+    private void refreshInternalStorageAfterSync(PhotoSyncEngine.Result result) {
+        if (result == null) return;
+        if ("hd-unmounted".equals(result.error) || "local-user".equals(result.error)
+                || "missing-user".equals(result.error)) {
+            return;
+        }
+        if (!isVesperaConnected()) return;
+        Network network = resolveVesperaNetwork();
+        if (network == null) return;
+        int apiPort = -1;
+        VesperaPortScan scan = VesperaPortScanner.lastScan();
+        if (scan != null && scan.apiRestPort > 0) apiPort = scan.apiRestPort;
+        String model = VesperaDeviceStore.from(this).getModel();
+        VesperaInternalStorage.Usage usage = VesperaInternalStorage.probe(
+                network, PhotoSyncEngine.HOST, apiPort, model);
+        if (usage == null) {
+            Log.w(TAG, "storage after FTP sync: probe failed");
+            return;
+        }
+        Log.i(TAG, "storage after FTP sync " + usage.label);
     }
 
     private void maybeSyncForFullStorage() {
@@ -1465,6 +1491,7 @@ public final class PhotoSyncService extends Service {
                 }
                 fileCount = PhotoSyncEngine.countLocalPhotos(root);
                 if (hud != null && paused) hud.hideByUser();
+                refreshInternalStorageAfterSync(result);
             } finally {
                 synchronized (syncLock) {
                     syncing = false;
@@ -1938,6 +1965,11 @@ public final class PhotoSyncService extends Service {
                 .putExtra(EXTRA_SELECTED, selectedSpec)
                 .putExtra(EXTRA_SYNCING, isCopyUiActive())
                 .putExtra(EXTRA_PAUSED, syncStore != null && syncStore.paused());
+        VesperaInternalStorage.Usage usage = VesperaInternalStorage.lastKnown();
+        if (usage != null) {
+            intent.putExtra(EXTRA_STORAGE_PERCENT, usage.usedPercent)
+                    .putExtra(EXTRA_STORAGE_LABEL, usage.label);
+        }
         sendBroadcast(intent);
         getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification());
     }
