@@ -268,6 +268,11 @@ public final class VesperaConnectionService extends Service {
     }
 
     private void adopt(Network network) {
+        // onCapabilitiesChanged fires on RSSI / validation ticks; do not
+        // re-broadcast CONNECTED or rewrite the route every time.
+        if (network.equals(activeNetwork) && STATUS_CONNECTED.equals(lastStatus)) {
+            return;
+        }
         activeNetwork = network;
         requestDaemonRoute(this);
         update(STATUS_CONNECTED);
@@ -340,8 +345,10 @@ public final class VesperaConnectionService extends Service {
     }
 
     private void update(String status) {
+        if (status == null) return;
         boolean becameConnected = STATUS_CONNECTED.equals(status)
                 && !STATUS_CONNECTED.equals(lastStatus);
+        if (status.equals(lastStatus)) return;
         lastStatus = status;
         Context localized = AppLocale.wrap(this);
         String text = StatusTexts.connection(localized, status);

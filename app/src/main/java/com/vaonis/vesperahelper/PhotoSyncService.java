@@ -89,7 +89,6 @@ public final class PhotoSyncService extends Service {
     /** Occupied percent of the mounted USB HD that shows the disk warning. */
     static final int HD_WARNING_PERCENT = 80;
     private static final long STORAGE_SYNC_COOLDOWN_MS = 10 * 60_000L;
-    private static final long ONLINE_SYNC_COOLDOWN_MS = 10 * 60_000L;
     private static final long AUTO_RETRY_MS = 5 * 60_000L;
     private static final long MIN_AUTO_DELAY_MS = 5_000L;
     private static final long SUN_TOO_HIGH_RETRY_MS = 10 * 60_000L;
@@ -133,7 +132,8 @@ public final class PhotoSyncService extends Service {
     private String lastBroadcastPhase = "";
     private volatile long extraAutoDelayMs;
     private long lastStorageSyncAt;
-    private long lastOnlineSyncAt;
+    /** Last CONNECTED/other status seen, so photo sync runs only on a rising edge. */
+    private volatile boolean vesperaWasConnected;
     private boolean connectionReceiverRegistered;
     private boolean clockReceiverRegistered;
     private final BroadcastReceiver connectionReceiver = new BroadcastReceiver() {
@@ -141,6 +141,8 @@ public final class PhotoSyncService extends Service {
             String status = intent.getStringExtra(VesperaConnectionService.EXTRA_STATUS);
             if (VesperaConnectionService.STATUS_CONNECTED.equals(status)) {
                 extraAutoDelayMs = 0;
+                boolean becameConnected = !vesperaWasConnected;
+                vesperaWasConnected = true;
                 worker.execute(() -> {
                     // Remount only when the instrument answers — SSID alone is not enough.
                     Network net = resolveVesperaNetwork();
@@ -158,8 +160,12 @@ public final class PhotoSyncService extends Service {
                     refreshTelescopeFtpLocked();
                     publish();
                 });
-                syncExecutor.execute(PhotoSyncService.this::syncOnVesperaOnline);
+                // Capability ticks re-broadcast CONNECTED; copy only on offline→online.
+                if (becameConnected) {
+                    syncExecutor.execute(PhotoSyncService.this::syncOnVesperaOnline);
+                }
             } else {
+                vesperaWasConnected = false;
                 worker.execute(() -> {
                     telescopeFtp.stop();
                     if (SystemSettingsStore.from(PhotoSyncService.this).hdMount()
@@ -1539,7 +1545,8 @@ public final class PhotoSyncService extends Service {
 
     /**
      * When Vespera goes from offline to online: resume an interrupted copy, or
-     * start a fresh USER sync (replaces the old daytime interval).
+     * start a fresh USER sync during daytime (replaces the old day interval).
+     * At night the periodic slots already copy; reconnects must not force extras.
      */
     private void syncOnVesperaOnline() {
         SystemSettingsStore settings = SystemSettingsStore.from(this);
@@ -1553,11 +1560,15 @@ public final class PhotoSyncService extends Service {
         }
         if (!settings.photoSync()) return;
         long now = System.currentTimeMillis();
-        if (lastOnlineSyncAt > 0 && now - lastOnlineSyncAt < ONLINE_SYNC_COOLDOWN_MS) {
-            Log.i(TAG, "Vespera online — photo sync skipped (cooldown)");
+        if (syncStore != null && !syncStore.isDaytime(now)) {
+            Log.i(TAG, "Vespera online — night, wait for scheduled slot");
+            maybeAutoSync(false, SystemActivityLog.KIND_PHOTO_SYNC);
             return;
         }
-        lastOnlineSyncAt = now;
+        if (syncStore != null && syncStore.syncedWithinInterval(now)) {
+            Log.i(TAG, "Vespera online — photo sync skipped (recent copy)");
+            return;
+        }
         Log.i(TAG, "Vespera online — starting photo sync");
         maybeAutoSync(true, SystemActivityLog.KIND_PHOTO_SYNC);
     }

@@ -520,22 +520,32 @@ final class PhotoSyncStore {
     }
 
     void recordSuccess(int copied, int skipped, int deleted, long bytes) {
+        long now = System.currentTimeMillis();
         prefs.edit()
-                .putLong(KEY_LAST_AT, System.currentTimeMillis())
+                .putLong(KEY_LAST_AT, now)
+                .putLong(KEY_LAST_ATTEMPT, now)
                 .putInt(KEY_LAST_COPIED, copied)
                 .putInt(KEY_LAST_SKIPPED, skipped)
                 .putInt(KEY_LAST_DELETED, deleted)
                 .putLong(KEY_LAST_BYTES, bytes)
                 .putString(KEY_LAST_ERROR, "")
                 .putBoolean(KEY_LAST_OK, true)
-                .apply();
+                .commit();
     }
 
     void recordFailure(String error) {
+        long now = System.currentTimeMillis();
         prefs.edit()
-                .putLong(KEY_LAST_AT, System.currentTimeMillis())
+                .putLong(KEY_LAST_AT, now)
+                .putLong(KEY_LAST_ATTEMPT, now)
                 .putString(KEY_LAST_ERROR, error == null ? "" : error)
                 .putBoolean(KEY_LAST_OK, false)
-                .apply();
+                .commit();
+    }
+
+    /** True if a sync finished (or was attempted) within the night interval. */
+    boolean syncedWithinInterval(long nowMs) {
+        long last = Math.max(lastAt(), lastAttemptAt());
+        return last > 0 && nowMs - last < nightIntervalMs();
     }
 }
