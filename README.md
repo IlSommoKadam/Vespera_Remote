@@ -56,6 +56,9 @@ L'app mantiene una richiesta Wi-Fi generica e chiede al daemon root `tools/vespe
 | 0.6.84 | 131 | Dopo il sync FTP ricalcola lo spazio occupato e lo aggiorna nello stato Telescopio |
 | 0.6.85 | 132 | Opzione in Sistema: a GENERAL_SUN_TOO_HIGH spegne il Pi dopo l’HD (daemon `shutdown-pi`) |
 | 0.6.86 | 133 | Se lo spegnimento a GENERAL_SUN_TOO_HIGH fallisce, ritenta lo stesso giorno (non aspetta domani) |
+| 0.6.87 | 134 | Spegnimento sun-too-high: non resta bloccato sulla sync; ogni 10 min aggiunge stop/park e logga l’errore HTTP |
+| 0.6.88 | 135 | Prima di spegnere aspetta che park/stop/motori siano idle (altrimenti ritenta tra 10 min) |
+| 0.6.89 | 136 | Dopo sync: PARK, poi poll ogni minuto fino a idle, poi spegnimento telescopio |
 
 Il daemon deve essere avviato come root sul Pi dopo il boot; l'app comunica con esso tramite `net.req` / `disk.req` nella propria directory esterna.
 

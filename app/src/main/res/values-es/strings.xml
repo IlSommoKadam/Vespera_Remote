@@ -517,6 +517,7 @@
     <string name="system_sun_result_triggered">GENERAL_SUN_TOO_HIGH detectado, sync/apagado en curso</string>
     <string name="system_sun_result_shutdown_ok">última sync hecha y telescopio apagado</string>
     <string name="system_sun_result_shutdown_fail">sync intentada, apagado fallido</string>
+    <string name="system_sun_result_step">intento %1$d: %2$s</string>
     <string name="system_sun_pi_title">Apagar Pi</string>
     <string name="system_sun_pi_info">Tras las demás acciones, apaga también el Raspberry Pi (daemon root).</string>
     <string name="system_sun_requires_check">Requiere «Comprobación matinal» activa.</string>

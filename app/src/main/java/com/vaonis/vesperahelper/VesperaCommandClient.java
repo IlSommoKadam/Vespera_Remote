@@ -13,6 +13,9 @@ final class VesperaCommandClient {
     private static final int TIMEOUT_MS = 8_000;
     private static final long INIT_WAIT_MS = 180_000L;
     private static final long INIT_POLL_MS = 4_000L;
+    /** After PARK, poll status every minute until idle or this timeout. */
+    static final long PARK_IDLE_WAIT_MS = 10 * 60_000L;
+    static final long PARK_IDLE_POLL_MS = 60_000L;
 
     enum Command {
         PARK("/v1/general/park"),
@@ -60,6 +63,23 @@ final class VesperaCommandClient {
         if (!snap.canSignCommands()) {
             return new Result(false, -1, snap.authMissingCode());
         }
+        if (command == Command.SHUTDOWN && snap.isShuttingDown()) {
+            return new Result(true, 200, "already_shutting_down");
+        }
+        if (command == Command.SHUTDOWN) {
+            status = VesperaStatusClient.fetchResult(host, port, network);
+            snap = status.snapshot;
+            if (snap == null) {
+                String detail = status.error.isEmpty() ? "status_unavailable" : status.error;
+                return new Result(false, -1, "status_unavailable: " + detail);
+            }
+            if (!snap.canSignCommands()) {
+                return new Result(false, -1, snap.authMissingCode());
+            }
+            if (snap.isShuttingDown()) {
+                return new Result(true, 200, "already_shutting_down");
+            }
+        }
 
         // Riprendi: se non inizializzato, auto-init + attesa, poi resume.
         if (command == Command.RESUME && !snap.initialized) {
@@ -106,7 +126,9 @@ final class VesperaCommandClient {
                     command.path,
                     "/v1/general/shutdown",
                     "/v1/general/powerOff",
-                    "/v1/device/shutdown"
+                    "/v1/device/shutdown",
+                    "/v1/board/shutdown",
+                    "/v1/general/requestShutdown"
             };
         } else if (command == Command.RESUME && fromStoredCapture) {
             paths = new String[] {
@@ -148,7 +170,8 @@ final class VesperaCommandClient {
                     return last;
                 }
                 boolean tryNext = response.code == 404 || response.code == 405
-                        || (command == Command.RESUME && isIncorrectParams(response.body));
+                        || (command == Command.RESUME && isIncorrectParams(response.body))
+                        || (shutdown && response.code != 401 && !ok);
                 if (!tryNext) return last;
             }
             if (command == Command.RESUME && !haveTarget) {
@@ -316,5 +339,48 @@ final class VesperaCommandClient {
         if (text == null) return "";
         String trimmed = text.trim();
         return trimmed.length() <= max ? trimmed : trimmed.substring(0, max) + "…";
+    }
+
+    /**
+     * After PARK, wait one minute then poll status every minute until no
+     * park/stop/slew/observation is active. Returns false if still busy after
+     * {@link #PARK_IDLE_WAIT_MS}.
+     */
+    static boolean waitUntilIdleAfterPark(String host, int port, Network network,
+            String reason) {
+        long deadline = System.currentTimeMillis() + PARK_IDLE_WAIT_MS;
+        String last = "";
+        while (true) {
+            try {
+                Thread.sleep(PARK_IDLE_POLL_MS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+            VesperaStatusSnapshot snap = VesperaStatusClient.fetch(
+                    host == null || host.isEmpty() ? "10.0.0.1" : host, port, network);
+            if (snap != null) {
+                if (snap.isShuttingDown()) {
+                    Log.i(TAG, "idle (" + reason + "): already shutting down");
+                    return true;
+                }
+                if (!snap.isBusyForShutdown()) {
+                    if (!last.isEmpty()) {
+                        Log.i(TAG, "idle (" + reason + ") after " + last);
+                    } else {
+                        Log.i(TAG, "idle (" + reason + ")");
+                    }
+                    return true;
+                }
+                last = snap.busyLabel();
+                Log.i(TAG, "waiting (" + reason + ") op=" + last);
+            } else {
+                Log.i(TAG, "waiting (" + reason + "): status unavailable");
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                Log.w(TAG, "still busy (" + reason + ") op=" + last);
+                return false;
+            }
+        }
     }
 }

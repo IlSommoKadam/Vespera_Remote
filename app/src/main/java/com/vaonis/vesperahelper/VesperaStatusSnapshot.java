@@ -144,4 +144,89 @@ final class VesperaStatusSnapshot {
                 .toUpperCase(java.util.Locale.US);
         return blob.contains("GENERAL_SUN_TOO_HIGH") || blob.contains("SUN_TOO_HIGH");
     }
+
+    boolean isShuttingDown() {
+        String blob = rawJson == null ? "" : rawJson;
+        return blob.contains("\"shuttingDown\":true") || blob.contains("\"shutting_down\":true");
+    }
+
+    /**
+     * Park / stop / slew / observation still running. Shutdown is refused until
+     * these finish (firmware sunCheck park takes about a minute).
+     */
+    boolean isBusyForShutdown() {
+        if (isShuttingDown()) return false;
+        if (isObserving() || isTrackingAcquisition()) return true;
+        String label = busyLabel();
+        return label != null && !label.isEmpty();
+    }
+
+    /** Short label of the blocking operation, or empty if idle. */
+    String busyLabel() {
+        if (isShuttingDown()) return "";
+        org.json.JSONObject body = statusBody();
+        if (body == null) {
+            String blob = (operationType + " " + step + " " + motors).toUpperCase(
+                    java.util.Locale.US);
+            if (blob.contains("PARK") || blob.contains("MOVING")) return blob.trim();
+            return "";
+        }
+        String fromOp = activeOpLabel(body.optJSONObject("currentOperation"));
+        if (!fromOp.isEmpty()) return fromOp;
+        org.json.JSONArray others = body.optJSONArray("otherCurrentOperations");
+        if (others != null) {
+            for (int i = 0; i < others.length(); i++) {
+                fromOp = activeOpLabel(others.optJSONObject(i));
+                if (!fromOp.isEmpty()) return fromOp;
+            }
+        }
+        org.json.JSONObject previous = body.optJSONObject("previousOperations");
+        if (previous != null) {
+            org.json.JSONArray names = previous.names();
+            if (names != null) {
+                for (int i = 0; i < names.length(); i++) {
+                    fromOp = activeOpLabel(previous.optJSONObject(names.optString(i)));
+                    if (!fromOp.isEmpty()) return fromOp;
+                }
+            }
+        }
+        if (motorsMoving(body.optJSONObject("motors"))) return "motors";
+        return "";
+    }
+
+    private org.json.JSONObject statusBody() {
+        if (rawJson == null || rawJson.isEmpty()) return null;
+        try {
+            org.json.JSONObject root = new org.json.JSONObject(rawJson);
+            org.json.JSONObject result = root.optJSONObject("result");
+            return result != null ? result : root;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String activeOpLabel(org.json.JSONObject op) {
+        if (op == null) return "";
+        if (op.optBoolean("stopped", false)) return "";
+        if (op.has("endTime") && !op.isNull("endTime")) return "";
+        String type = op.optString("type", "").trim();
+        if (type.isEmpty()) return "";
+        return type;
+    }
+
+    private static boolean motorsMoving(org.json.JSONObject motors) {
+        if (motors == null) return false;
+        org.json.JSONArray names = motors.names();
+        if (names == null) return false;
+        for (int i = 0; i < names.length(); i++) {
+            org.json.JSONObject axis = motors.optJSONObject(names.optString(i));
+            if (axis == null) continue;
+            String state = axis.optString("state", "").toUpperCase(java.util.Locale.US);
+            if (state.contains("MOVING") || state.contains("RUNNING")
+                    || state.contains("BUSY")) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

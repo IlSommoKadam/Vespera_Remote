@@ -416,6 +416,18 @@ final class SystemPanel {
         if (SystemSettingsStore.SUN_RESULT_NOT_STATUS.equals(code)) {
             return activity.getString(R.string.system_sun_result_not_status);
         }
+        if (code != null && code.startsWith("step")) {
+            int sp = code.indexOf(' ');
+            String num = sp < 0 ? code.substring(4) : code.substring(4, sp);
+            String rest = sp < 0 ? "" : code.substring(sp + 1).trim();
+            int n = 1;
+            try {
+                n = Integer.parseInt(num.replaceAll("[^0-9]", ""));
+            } catch (NumberFormatException ignored) {
+            }
+            if (n < 1) n = 1;
+            return activity.getString(R.string.system_sun_result_step, n, rest);
+        }
         return code == null || code.isEmpty() ? "—" : code;
     }
 

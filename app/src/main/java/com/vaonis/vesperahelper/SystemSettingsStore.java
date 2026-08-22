@@ -26,6 +26,7 @@ final class SystemSettingsStore {
     private static final String KEY_SUN_TOO_HIGH_DAY = "sun_too_high_day";
     private static final String KEY_SUN_TOO_HIGH_AT = "sun_too_high_at";
     private static final String KEY_SUN_TOO_HIGH_RESULT = "sun_too_high_result";
+    private static final String KEY_SUN_TOO_HIGH_ATTEMPT = "sun_too_high_attempt";
 
     static final String SUN_RESULT_NOT_STATUS = "not_status";
     static final String SUN_RESULT_TRIGGERED = "triggered";
@@ -149,12 +150,20 @@ final class SystemSettingsStore {
     int sunTooHighDay() { return prefs.getInt(KEY_SUN_TOO_HIGH_DAY, -1); }
     long sunTooHighAt() { return prefs.getLong(KEY_SUN_TOO_HIGH_AT, 0); }
     String sunTooHighResult() { return prefs.getString(KEY_SUN_TOO_HIGH_RESULT, ""); }
+    int sunTooHighAttempt() { return prefs.getInt(KEY_SUN_TOO_HIGH_ATTEMPT, 0); }
 
     void recordSunTooHigh(int dayKey, String result) {
+        recordSunTooHigh(dayKey, result, 0);
+    }
+
+    void recordSunTooHigh(int dayKey, String result, int attempt) {
+        boolean done = SUN_RESULT_NOT_STATUS.equals(result)
+                || SUN_RESULT_SHUTDOWN_OK.equals(result);
         prefs.edit()
                 .putInt(KEY_SUN_TOO_HIGH_DAY, dayKey)
                 .putLong(KEY_SUN_TOO_HIGH_AT, System.currentTimeMillis())
                 .putString(KEY_SUN_TOO_HIGH_RESULT, result == null ? "" : result)
+                .putInt(KEY_SUN_TOO_HIGH_ATTEMPT, done ? 0 : Math.max(0, attempt))
                 .commit();
     }
 }

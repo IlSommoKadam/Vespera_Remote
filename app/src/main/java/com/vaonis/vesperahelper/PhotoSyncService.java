@@ -196,7 +196,10 @@ public final class PhotoSyncService extends Service {
     private final Runnable autoSyncAlarm = () -> syncExecutor.execute(
             () -> maybeAutoSync(false, SystemActivityLog.KIND_PHOTO_SYNC));
     private final Runnable hourlyStorageCheck = () -> worker.execute(this::maybeCheckInternalStorage);
-    private final Runnable sunTooHighAlarm = () -> worker.execute(this::maybeCheckSunTooHigh);
+    private final Runnable sunTooHighAlarm = () -> {
+        Thread t = new Thread(this::maybeCheckSunTooHigh, "sun-too-high");
+        t.start();
+    };
     private final Runnable tick = new Runnable() {
         @Override public void run() {
         worker.execute(() -> {
@@ -1142,7 +1145,8 @@ public final class PhotoSyncService extends Service {
             scheduleSunTooHighCheck();
             return;
         }
-        Log.i(TAG, "GENERAL_SUN_TOO_HIGH — running selected actions");
+        Log.i(TAG, "GENERAL_SUN_TOO_HIGH — running selected actions (attempt "
+                + settings.sunTooHighAttempt() + ")");
         if (!settings.sunSync() && !settings.sunTelescopeShutdown()
                 && !settings.sunHdShutdown() && !settings.sunPiShutdown()) {
             Log.i(TAG, "sun-too-high: no actions enabled");
@@ -1156,16 +1160,11 @@ public final class PhotoSyncService extends Service {
             retrySunTooHighSoon();
             return;
         }
-        settings.recordSunTooHigh(today, SystemSettingsStore.SUN_RESULT_TRIGGERED);
-        final int port = apiPort;
-        final Network net = network;
-        syncExecutor.execute(() -> {
-            try {
-                lastSyncThenShutdown(today, net, port);
-            } finally {
-                sunShutdownRunning.set(false);
-            }
-        });
+        try {
+            lastSyncThenShutdown(today, network, apiPort);
+        } finally {
+            sunShutdownRunning.set(false);
+        }
     }
 
     private void retrySunTooHighSoon() {
@@ -1182,18 +1181,37 @@ public final class PhotoSyncService extends Service {
      * Copy remaining USER photos, then power off the telescope. Used by the
      * sun-too-high check and by the manual shutdown button. {@code dayKey}
      * ≥ 0 records the sun-too-high outcome; {@code -1} is a manual shutdown.
+     * After sync, sends PARK then waits (poll every minute) then SHUTDOWN.
+     * On sun-too-high failure, retries every 10 minutes with the same flow.
      */
     private void lastSyncThenShutdown(int dayKey, Network network, int apiPort) {
         boolean sunFlow = dayKey >= 0;
         SystemSettingsStore settings = SystemSettingsStore.from(this);
+        int attempt = sunFlow ? settings.sunTooHighAttempt() : 0;
+        if (sunFlow) {
+            settings.recordSunTooHigh(dayKey, SystemSettingsStore.SUN_RESULT_TRIGGERED,
+                    attempt + 1);
+        }
         pauseRequested.set(false);
         if (syncStore != null) {
             syncStore.setPaused(false);
             syncStore.setPauseUntilSchedule(false);
         }
-        if (!sunFlow || settings.sunSync()) {
+        boolean syncBusy;
+        synchronized (syncLock) {
+            syncBusy = syncing && lastProgress != null && lastProgress.active;
+        }
+        long now = System.currentTimeMillis();
+        boolean recentSync = syncStore != null && syncStore.lastOk() && syncStore.lastAt() > 0
+                && now - syncStore.lastAt() < 2 * 60 * 60_000L;
+        boolean doSync = !sunFlow || (settings.sunSync() && attempt == 0
+                && !syncBusy && !recentSync);
+        if (doSync) {
             Log.i(TAG, "photo sync before telescope shutdown");
             maybeAutoSync(true, SystemActivityLog.KIND_PHOTO_SYNC);
+        } else if (sunFlow && settings.sunSync()) {
+            Log.i(TAG, "sun-too-high: photo sync skipped (attempt=" + attempt
+                    + " busy=" + syncBusy + " recent=" + recentSync + ")");
         } else if (sunFlow) {
             Log.i(TAG, "sun-too-high: photo sync skipped (disabled)");
         }
@@ -1206,30 +1224,46 @@ public final class PhotoSyncService extends Service {
         }
         boolean telescopeRequested = !sunFlow || settings.sunTelescopeShutdown();
         boolean telescopeOk = true;
+        final String stepLabel = "park+shutdown";
+        VesperaCommandClient.Result result = null;
         try {
             if (telescopeRequested) {
-                VesperaCommandClient.Result result = VesperaCommandClient.send(
-                        PhotoSyncEngine.HOST, port, net, VesperaCommandClient.Command.SHUTDOWN);
-                telescopeOk = result != null && result.success;
-                if (sunFlow) {
-                    String code = telescopeOk
-                            ? SystemSettingsStore.SUN_RESULT_SHUTDOWN_OK
-                            : SystemSettingsStore.SUN_RESULT_SHUTDOWN_FAIL;
-                    settings.recordSunTooHigh(dayKey, code);
-                    String detail = telescopeOk
-                            ? SystemActivityLog.DETAIL_SHUTDOWN_OK
-                            : SystemActivityLog.DETAIL_SHUTDOWN_FAIL;
-                    if (!telescopeOk && result != null) {
-                        detail = SystemActivityLog.DETAIL_SHUTDOWN_FAIL
-                                + " " + result.httpCode + " " + result.message;
+                result = VesperaCommandClient.send(
+                        PhotoSyncEngine.HOST, port, net,
+                        VesperaCommandClient.Command.PARK);
+                Log.i(TAG, "park before shutdown " + describeResult(result));
+                if (!waitUntilTelescopeIdleAfterPark(net, port, "after park")) {
+                    telescopeOk = false;
+                    result = new VesperaCommandClient.Result(false, -1, "busy_after_park");
+                    if (sunFlow) {
+                        settings.recordSunTooHigh(dayKey,
+                                SystemSettingsStore.SUN_RESULT_SHUTDOWN_FAIL, attempt + 1);
+                        SystemActivityLog.record(this, SystemActivityLog.KIND_SUN_TOO_HIGH,
+                                "step" + (attempt + 1) + " wait-after-park fail busy_after_park");
                     }
-                    SystemActivityLog.record(this, SystemActivityLog.KIND_SUN_TOO_HIGH, detail);
+                    Log.i(TAG, "shutdown skipped: telescope still busy after park");
+                } else {
+                    result = VesperaCommandClient.send(
+                            PhotoSyncEngine.HOST, port, net,
+                            VesperaCommandClient.Command.SHUTDOWN);
+                    telescopeOk = result != null && result.success;
+                    if (sunFlow) {
+                        String code = telescopeOk
+                                ? SystemSettingsStore.SUN_RESULT_SHUTDOWN_OK
+                                : SystemSettingsStore.SUN_RESULT_SHUTDOWN_FAIL;
+                        settings.recordSunTooHigh(dayKey, code, telescopeOk ? 0 : attempt + 1);
+                        String detail = telescopeOk
+                                ? SystemActivityLog.DETAIL_SHUTDOWN_OK
+                                : ("step" + (attempt + 1) + " " + stepLabel + " fail "
+                                        + describeResult(result));
+                        SystemActivityLog.record(this, SystemActivityLog.KIND_SUN_TOO_HIGH, detail);
+                    }
+                    Log.i(TAG, "shutdown after photo sync " + (telescopeOk ? "ok" : "fail")
+                            + " " + describeResult(result) + " attempt=" + attempt);
                 }
-                Log.i(TAG, "shutdown after photo sync " + (telescopeOk ? "ok" : "fail")
-                        + (result == null ? "" : (" http=" + result.httpCode + " " + result.message)));
             } else if (sunFlow) {
                 Log.i(TAG, "sun-too-high: telescope shutdown skipped (disabled)");
-                settings.recordSunTooHigh(dayKey, SystemSettingsStore.SUN_RESULT_SHUTDOWN_OK);
+                settings.recordSunTooHigh(dayKey, SystemSettingsStore.SUN_RESULT_SHUTDOWN_OK, 0);
                 SystemActivityLog.record(this, SystemActivityLog.KIND_SUN_TOO_HIGH,
                         SystemActivityLog.DETAIL_SHUTDOWN_OK);
             }
@@ -1264,6 +1298,17 @@ public final class PhotoSyncService extends Service {
                 else scheduleSunTooHighCheck();
             }
         }
+    }
+
+    private static String describeResult(VesperaCommandClient.Result result) {
+        if (result == null) return "null";
+        return "http=" + result.httpCode + " " + result.message;
+    }
+
+    /** Poll every minute after PARK until the telescope is idle. */
+    private boolean waitUntilTelescopeIdleAfterPark(Network net, int port, String reason) {
+        return VesperaCommandClient.waitUntilIdleAfterPark(
+                PhotoSyncEngine.HOST, port, net, reason);
     }
 
     /** After sun-too-high HD eject, optionally power off the Pi via vespera-netd. */
