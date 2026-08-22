@@ -457,7 +457,7 @@
     <string name="system_group_photo_sync">Photo sync</string>
     <string name="system_group_hd">Hard disk and FTP</string>
     <string name="system_group_sun_shutdown">GENERAL_SUN_TOO_HIGH shutdown</string>
-    <string name="system_group_sun_intro">Morning check (~30 min after sunrise): sync, telescope and HD off; optionally the Pi too.</string>
+    <string name="system_group_sun_intro">If GENERAL_SUN_TOO_HIGH is active, only the selected actions below run (order: sync → telescope → HD → Pi).</string>
     <string name="system_group_connection">Vespera connection</string>
     <string name="system_group_app">App startup</string>
     <string name="system_group_clock">Clock and site</string>
@@ -500,8 +500,14 @@
     <string name="system_ftp_info">Serves copied photos from the HD over local FTP when the disk is mounted.</string>
     <string name="system_keepalive_title">Restart services if the app is closed</string>
     <string name="system_keepalive_info">If you swipe the app away, connection and sync services start again on their own.</string>
-    <string name="system_sun_title">Power off on GENERAL_SUN_TOO_HIGH</string>
-    <string name="system_sun_info">One check per day, about 30 min after sunrise. If status is GENERAL_SUN_TOO_HIGH: last photo sync, then power off the telescope.</string>
+    <string name="system_sun_check_title">Morning check</string>
+    <string name="system_sun_check_info">Once a day, about 30 min after sunrise: looks for GENERAL_SUN_TOO_HIGH.</string>
+    <string name="system_sun_sync_title">Last photo sync</string>
+    <string name="system_sun_sync_info">Copy remaining USER photos to the HD before other actions.</string>
+    <string name="system_sun_telescope_title">Power off telescope</string>
+    <string name="system_sun_telescope_info">Send shutdown to the Vespera.</string>
+    <string name="system_sun_hd_title">Power off HD</string>
+    <string name="system_sun_hd_info">Unmount and cut USB power to the hard disk.</string>
     <string name="system_sun_next">Next check: %1$s.</string>
     <string name="system_sun_due">Check pending (window is open).</string>
     <string name="system_sun_unset">Set a city on the Photos / Hard Disk tab to compute sunrise.</string>
@@ -511,8 +517,8 @@
     <string name="system_sun_result_triggered">GENERAL_SUN_TOO_HIGH seen, sync/power-off in progress</string>
     <string name="system_sun_result_shutdown_ok">last sync done, telescope powered off</string>
     <string name="system_sun_result_shutdown_fail">sync attempted, power-off failed</string>
-    <string name="system_sun_pi_title">Power off Pi on GENERAL_SUN_TOO_HIGH</string>
-    <string name="system_sun_pi_info">After sync, telescope shutdown and HD off, also powers off the Raspberry Pi (root daemon).</string>
-    <string name="system_sun_pi_requires_sun">Requires «Power off on GENERAL_SUN_TOO_HIGH» enabled.</string>
+    <string name="system_sun_pi_title">Power off Pi</string>
+    <string name="system_sun_pi_info">After the other actions, also powers off the Raspberry Pi (root daemon).</string>
+    <string name="system_sun_requires_check">Requires «Morning check» enabled.</string>
 
 </resources>

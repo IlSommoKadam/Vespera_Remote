@@ -1069,7 +1069,7 @@ public final class PhotoSyncService extends Service {
             return;
         }
         mainHandler.removeCallbacks(sunTooHighAlarm);
-        if (!SystemSettingsStore.from(this).sunTooHigh()) return;
+        if (!SystemSettingsStore.from(this).sunCheck()) return;
         long delay = delayUntilSunTooHighCheck();
         if (delay < 0) delay = 60 * 60_000L;
         if (delay < MIN_AUTO_DELAY_MS) delay = MIN_AUTO_DELAY_MS;
@@ -1089,7 +1089,7 @@ public final class PhotoSyncService extends Service {
 
     private void maybeCheckSunTooHigh() {
         SystemSettingsStore settings = SystemSettingsStore.from(this);
-        if (!settings.sunTooHigh() || syncStore == null || !syncStore.hasSite()) {
+        if (!settings.sunCheck() || syncStore == null || !syncStore.hasSite()) {
             scheduleSunTooHighCheck();
             return;
         }
@@ -1136,8 +1136,16 @@ public final class PhotoSyncService extends Service {
             scheduleSunTooHighCheck();
             return;
         }
-        Log.i(TAG, "GENERAL_SUN_TOO_HIGH — last photo sync then shutdown");
+        Log.i(TAG, "GENERAL_SUN_TOO_HIGH — running selected actions");
         settings.recordSunTooHigh(today, SystemSettingsStore.SUN_RESULT_TRIGGERED);
+        if (!settings.sunSync() && !settings.sunTelescopeShutdown()
+                && !settings.sunHdShutdown() && !settings.sunPiShutdown()) {
+            Log.i(TAG, "sun-too-high: no actions enabled");
+            SystemActivityLog.record(this, SystemActivityLog.KIND_SUN_TOO_HIGH,
+                    SystemActivityLog.DETAIL_OK);
+            scheduleSunTooHighCheck();
+            return;
+        }
         final int port = apiPort;
         final Network net = network;
         syncExecutor.execute(() -> lastSyncThenShutdown(today, net, port));
@@ -1160,13 +1168,19 @@ public final class PhotoSyncService extends Service {
      * ≥ 0 records the sun-too-high outcome; {@code -1} is a manual shutdown.
      */
     private void lastSyncThenShutdown(int dayKey, Network network, int apiPort) {
-        Log.i(TAG, "photo sync before telescope shutdown");
+        boolean sunFlow = dayKey >= 0;
+        SystemSettingsStore settings = SystemSettingsStore.from(this);
         pauseRequested.set(false);
         if (syncStore != null) {
             syncStore.setPaused(false);
             syncStore.setPauseUntilSchedule(false);
         }
-        maybeAutoSync(true, SystemActivityLog.KIND_PHOTO_SYNC);
+        if (!sunFlow || settings.sunSync()) {
+            Log.i(TAG, "photo sync before telescope shutdown");
+            maybeAutoSync(true, SystemActivityLog.KIND_PHOTO_SYNC);
+        } else if (sunFlow) {
+            Log.i(TAG, "sun-too-high: photo sync skipped (disabled)");
+        }
         Network net = network;
         if (net == null) net = resolveVesperaNetwork();
         int port = apiPort;
@@ -1174,29 +1188,48 @@ public final class PhotoSyncService extends Service {
             VesperaPortScan scan = VesperaPortScanner.lastScan();
             if (scan != null && scan.apiRestPort > 0) port = scan.apiRestPort;
         }
-        VesperaCommandClient.Result result = VesperaCommandClient.send(
-                PhotoSyncEngine.HOST, port, net, VesperaCommandClient.Command.SHUTDOWN);
-        boolean ok = result != null && result.success;
-        if (dayKey >= 0) {
-            String code = ok
-                    ? SystemSettingsStore.SUN_RESULT_SHUTDOWN_OK
-                    : SystemSettingsStore.SUN_RESULT_SHUTDOWN_FAIL;
-            SystemSettingsStore.from(this).recordSunTooHigh(dayKey, code);
+        boolean telescopeRequested = !sunFlow || settings.sunTelescopeShutdown();
+        boolean telescopeOk = true;
+        if (telescopeRequested) {
+            VesperaCommandClient.Result result = VesperaCommandClient.send(
+                    PhotoSyncEngine.HOST, port, net, VesperaCommandClient.Command.SHUTDOWN);
+            telescopeOk = result != null && result.success;
+            if (sunFlow) {
+                String code = telescopeOk
+                        ? SystemSettingsStore.SUN_RESULT_SHUTDOWN_OK
+                        : SystemSettingsStore.SUN_RESULT_SHUTDOWN_FAIL;
+                settings.recordSunTooHigh(dayKey, code);
+                SystemActivityLog.record(this, SystemActivityLog.KIND_SUN_TOO_HIGH,
+                        telescopeOk ? SystemActivityLog.DETAIL_SHUTDOWN_OK
+                                : SystemActivityLog.DETAIL_SHUTDOWN_FAIL);
+            }
+            Log.i(TAG, "shutdown after photo sync " + (telescopeOk ? "ok" : "fail")
+                    + (result == null ? "" : (" http=" + result.httpCode + " " + result.message)));
+        } else if (sunFlow) {
+            Log.i(TAG, "sun-too-high: telescope shutdown skipped (disabled)");
+            settings.recordSunTooHigh(dayKey, SystemSettingsStore.SUN_RESULT_SHUTDOWN_OK);
             SystemActivityLog.record(this, SystemActivityLog.KIND_SUN_TOO_HIGH,
-                    ok ? SystemActivityLog.DETAIL_SHUTDOWN_OK
-                            : SystemActivityLog.DETAIL_SHUTDOWN_FAIL);
+                    SystemActivityLog.DETAIL_SHUTDOWN_OK);
         }
-        Log.i(TAG, "shutdown after photo sync " + (ok ? "ok" : "fail")
-                + (result == null ? "" : (" http=" + result.httpCode + " " + result.message)));
-        // No more sync possible — spin down the USB HD (same as boot-when-offline).
-        powerOffHdLocked(R.string.photo_hd_powered_off_shutdown);
         Context localized = AppLocale.wrap(this);
-        String shutdownMsg = localized.getString(ok
-                ? R.string.telescope_command_shutdown_ok
-                : R.string.system_sun_result_shutdown_fail);
-        message = shutdownMsg + "\n" + localized.getString(R.string.photo_hd_powered_off_shutdown);
-        publish();
-        if (dayKey >= 0 && SystemSettingsStore.from(this).sunPiShutdown()) {
+        StringBuilder msg = new StringBuilder();
+        if (telescopeRequested) {
+            msg.append(localized.getString(telescopeOk
+                    ? R.string.telescope_command_shutdown_ok
+                    : R.string.system_sun_result_shutdown_fail));
+        }
+        if (!sunFlow || settings.sunHdShutdown()) {
+            powerOffHdLocked(R.string.photo_hd_powered_off_shutdown);
+            if (msg.length() > 0) msg.append('\n');
+            msg.append(localized.getString(R.string.photo_hd_powered_off_shutdown));
+        } else if (sunFlow) {
+            Log.i(TAG, "sun-too-high: HD shutdown skipped (disabled)");
+        }
+        if (msg.length() > 0) {
+            message = msg.toString();
+            publish();
+        }
+        if (sunFlow && settings.sunPiShutdown()) {
             schedulePiShutdownAfterSunTooHigh();
         }
     }

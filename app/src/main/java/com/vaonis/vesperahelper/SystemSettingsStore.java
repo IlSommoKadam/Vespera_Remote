@@ -17,7 +17,11 @@ final class SystemSettingsStore {
     private static final String KEY_WATCHDOG = "watchdog";
     private static final String KEY_FTP_LOCAL = "ftp_local";
     private static final String KEY_KEEP_ALIVE = "keep_alive";
-    private static final String KEY_SUN_TOO_HIGH = "sun_too_high";
+    /** Daily GENERAL_SUN_TOO_HIGH check (~30 min after sunrise). */
+    private static final String KEY_SUN_CHECK = "sun_too_high";
+    private static final String KEY_SUN_SYNC = "sun_sync";
+    private static final String KEY_SUN_TELESCOPE = "sun_telescope_shutdown";
+    private static final String KEY_SUN_HD = "sun_hd_shutdown";
     private static final String KEY_SUN_PI_SHUTDOWN = "sun_pi_shutdown";
     private static final String KEY_SUN_TOO_HIGH_DAY = "sun_too_high_day";
     private static final String KEY_SUN_TOO_HIGH_AT = "sun_too_high_at";
@@ -40,7 +44,10 @@ final class SystemSettingsStore {
         boolean watchdog;
         boolean ftpLocal;
         boolean keepAlive;
-        boolean sunTooHigh;
+        boolean sunCheck;
+        boolean sunSync;
+        boolean sunTelescopeShutdown;
+        boolean sunHdShutdown;
         boolean sunPiShutdown;
     }
 
@@ -68,7 +75,10 @@ final class SystemSettingsStore {
         snap.watchdog = watchdog();
         snap.ftpLocal = ftpLocal();
         snap.keepAlive = keepAlive();
-        snap.sunTooHigh = sunTooHigh();
+        snap.sunCheck = sunCheck();
+        snap.sunSync = sunSync();
+        snap.sunTelescopeShutdown = sunTelescopeShutdown();
+        snap.sunHdShutdown = sunHdShutdown();
         snap.sunPiShutdown = sunPiShutdown();
         return snap;
     }
@@ -87,7 +97,10 @@ final class SystemSettingsStore {
                 .putBoolean(KEY_WATCHDOG, snap.watchdog)
                 .putBoolean(KEY_FTP_LOCAL, snap.ftpLocal)
                 .putBoolean(KEY_KEEP_ALIVE, snap.keepAlive)
-                .putBoolean(KEY_SUN_TOO_HIGH, snap.sunTooHigh)
+                .putBoolean(KEY_SUN_CHECK, snap.sunCheck)
+                .putBoolean(KEY_SUN_SYNC, snap.sunSync)
+                .putBoolean(KEY_SUN_TELESCOPE, snap.sunTelescopeShutdown)
+                .putBoolean(KEY_SUN_HD, snap.sunHdShutdown)
                 .putBoolean(KEY_SUN_PI_SHUTDOWN, snap.sunPiShutdown)
                 .commit();
     }
@@ -103,8 +116,29 @@ final class SystemSettingsStore {
     boolean watchdog() { return prefs.getBoolean(KEY_WATCHDOG, true); }
     boolean ftpLocal() { return prefs.getBoolean(KEY_FTP_LOCAL, true); }
     boolean keepAlive() { return prefs.getBoolean(KEY_KEEP_ALIVE, true); }
-    boolean sunTooHigh() { return prefs.getBoolean(KEY_SUN_TOO_HIGH, true); }
+
+    boolean sunCheck() { return prefs.getBoolean(KEY_SUN_CHECK, true); }
+
+    /** Pre-0.6.86 installs bundled sync+telescope under {@link #KEY_SUN_CHECK}. */
+    boolean sunSync() {
+        if (!prefs.contains(KEY_SUN_SYNC)) return sunCheck();
+        return prefs.getBoolean(KEY_SUN_SYNC, true);
+    }
+
+    boolean sunTelescopeShutdown() {
+        if (!prefs.contains(KEY_SUN_TELESCOPE)) return sunCheck();
+        return prefs.getBoolean(KEY_SUN_TELESCOPE, true);
+    }
+
+    boolean sunHdShutdown() {
+        if (!prefs.contains(KEY_SUN_HD)) return sunCheck();
+        return prefs.getBoolean(KEY_SUN_HD, true);
+    }
+
     boolean sunPiShutdown() { return prefs.getBoolean(KEY_SUN_PI_SHUTDOWN, false); }
+
+    /** @deprecated use {@link #sunCheck()} */
+    boolean sunTooHigh() { return sunCheck(); }
 
     int sunTooHighDay() { return prefs.getInt(KEY_SUN_TOO_HIGH_DAY, -1); }
     long sunTooHighAt() { return prefs.getLong(KEY_SUN_TOO_HIGH_AT, 0); }

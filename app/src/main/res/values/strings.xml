@@ -457,7 +457,7 @@
     <string name="system_group_photo_sync">Sync foto</string>
     <string name="system_group_hd">Hard disk e FTP</string>
     <string name="system_group_sun_shutdown">Spegnimento GENERAL_SUN_TOO_HIGH</string>
-    <string name="system_group_sun_intro">Controllo al mattino (~30 min dopo l’alba): sync, spegnimento telescopio e HD; opzionalmente anche il Pi.</string>
+    <string name="system_group_sun_intro">Se GENERAL_SUN_TOO_HIGH è attivo, esegue solo le azioni selezionate sotto (ordine: sync → telescopio → HD → Pi).</string>
     <string name="system_group_connection">Connessione Vespera</string>
     <string name="system_group_app">Avvio app</string>
     <string name="system_group_clock">Orologio e sito</string>
@@ -500,8 +500,14 @@
     <string name="system_ftp_info">Serve le foto copiate sull’HD via FTP locale, quando il disco è montato.</string>
     <string name="system_keepalive_title">Riavvio servizi se l’app viene chiusa</string>
     <string name="system_keepalive_info">Se chiudi l’app dallo switcher, i servizi di connessione e sync ripartono da soli.</string>
-    <string name="system_sun_title">Spegnimento a GENERAL_SUN_TOO_HIGH</string>
-    <string name="system_sun_info">Un controllo al giorno, circa 30 min dopo l’alba. Se lo stato è GENERAL_SUN_TOO_HIGH: ultima sync foto, poi spegne il telescopio.</string>
+    <string name="system_sun_check_title">Controllo mattutino</string>
+    <string name="system_sun_check_info">Una volta al giorno, circa 30 min dopo l’alba: verifica lo stato GENERAL_SUN_TOO_HIGH.</string>
+    <string name="system_sun_sync_title">Ultima sync foto</string>
+    <string name="system_sun_sync_info">Copia le foto USER rimaste sull’HD prima delle altre azioni.</string>
+    <string name="system_sun_telescope_title">Spegni telescopio</string>
+    <string name="system_sun_telescope_info">Invia lo spegnimento al Vespera.</string>
+    <string name="system_sun_hd_title">Spegni HD</string>
+    <string name="system_sun_hd_info">Smonta ed esclude l’alimentazione USB dell’hard disk.</string>
     <string name="system_sun_next">Prossimo controllo: %1$s.</string>
     <string name="system_sun_due">Controllo in attesa (finestra aperta).</string>
     <string name="system_sun_unset">Serve una città nella tab Foto / Hard Disk per calcolare l’alba.</string>
@@ -511,8 +517,8 @@
     <string name="system_sun_result_triggered">GENERAL_SUN_TOO_HIGH rilevato, sync/spegnimento in corso</string>
     <string name="system_sun_result_shutdown_ok">ultima sync e telescopio spento</string>
     <string name="system_sun_result_shutdown_fail">sync tentata, spegnimento non riuscito</string>
-    <string name="system_sun_pi_title">Spegni Pi a GENERAL_SUN_TOO_HIGH</string>
-    <string name="system_sun_pi_info">Dopo sync, spegnimento telescopio e HD spento, spegne anche il Raspberry Pi (daemon root).</string>
-    <string name="system_sun_pi_requires_sun">Richiede «Spegnimento a GENERAL_SUN_TOO_HIGH» attivo.</string>
+    <string name="system_sun_pi_title">Spegni Pi</string>
+    <string name="system_sun_pi_info">Dopo le altre azioni, spegne anche il Raspberry Pi (daemon root).</string>
+    <string name="system_sun_requires_check">Richiede «Controllo mattutino» attivo.</string>
 
 </resources>
