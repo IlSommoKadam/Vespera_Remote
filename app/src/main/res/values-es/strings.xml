@@ -454,6 +454,13 @@
     <string name="system_save">Guardar</string>
     <string name="system_saved">Ajustes guardados.</string>
     <string name="system_activity_off">Desactivada.</string>
+    <string name="system_group_photo_sync">Sync de fotos</string>
+    <string name="system_group_hd">Disco duro y FTP</string>
+    <string name="system_group_sun_shutdown">Apagado GENERAL_SUN_TOO_HIGH</string>
+    <string name="system_group_sun_intro">Comprobación matinal (~30 min tras el amanecer): sync, apagado del telescopio y HD; opcionalmente también el Pi.</string>
+    <string name="system_group_connection">Conexión Vespera</string>
+    <string name="system_group_app">Arranque de la app</string>
+    <string name="system_group_clock">Reloj y sitio</string>
     <string name="system_photo_sync_title">Sync de fotos programada</string>
     <string name="system_photo_sync_info">De noche cada %1$s h. De día (%2$02d:00–%3$02d:00) al encender el Vespera y antes del apagado. Próxima: %4$s.</string>
     <string name="system_photo_sync_last">Última sync: %1$s — %2$s</string>

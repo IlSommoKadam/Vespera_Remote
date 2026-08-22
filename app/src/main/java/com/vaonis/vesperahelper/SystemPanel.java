@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -74,21 +75,34 @@ final class SystemPanel {
         logBody = addLogBox(layout);
 
         SystemSettingsStore.Snapshot snap = settings.snapshot();
-        photoSync = addRow(layout, activity.getString(R.string.system_photo_sync_title), snap.photoSync);
-        storageSync = addRow(layout, activity.getString(R.string.system_storage_sync_title), snap.storageSync);
-        resumeSync = addRow(layout, activity.getString(R.string.system_resume_sync_title), snap.resumeSync);
-        sunTooHigh = addRow(layout, activity.getString(R.string.system_sun_title), snap.sunTooHigh);
-        sunPiShutdown = addRow(layout, activity.getString(R.string.system_sun_pi_title),
+
+        LinearLayout photoGroup = addGroup(layout, R.string.system_group_photo_sync, 0);
+        photoSync = addRow(photoGroup, activity.getString(R.string.system_photo_sync_title), snap.photoSync);
+        storageSync = addRow(photoGroup, activity.getString(R.string.system_storage_sync_title), snap.storageSync);
+        resumeSync = addRow(photoGroup, activity.getString(R.string.system_resume_sync_title), snap.resumeSync);
+
+        LinearLayout hdGroup = addGroup(layout, R.string.system_group_hd, 0);
+        hdMount = addRow(hdGroup, activity.getString(R.string.system_hd_mount_title), snap.hdMount);
+        ftpLocal = addRow(hdGroup, activity.getString(R.string.system_ftp_title), snap.ftpLocal);
+
+        LinearLayout sunGroup = addGroup(layout, R.string.system_group_sun_shutdown,
+                R.string.system_group_sun_intro);
+        sunTooHigh = addRow(sunGroup, activity.getString(R.string.system_sun_title), snap.sunTooHigh);
+        sunPiShutdown = addRow(sunGroup, activity.getString(R.string.system_sun_pi_title),
                 snap.sunPiShutdown);
-        hdMount = addRow(layout, activity.getString(R.string.system_hd_mount_title), snap.hdMount);
-        clockNtp = addRow(layout, activity.getString(R.string.system_clock_title), snap.clockNtp);
-        bootStart = addRow(layout, activity.getString(R.string.system_boot_title), snap.bootStart);
-        wifiConnect = addRow(layout, activity.getString(R.string.system_wifi_title), snap.wifiConnect);
-        singularityStart = addRow(layout,
+
+        LinearLayout connGroup = addGroup(layout, R.string.system_group_connection, 0);
+        wifiConnect = addRow(connGroup, activity.getString(R.string.system_wifi_title), snap.wifiConnect);
+        singularityStart = addRow(connGroup,
                 activity.getString(R.string.system_singularity_title), snap.singularityStart);
-        watchdog = addRow(layout, activity.getString(R.string.system_watchdog_title), snap.watchdog);
-        ftpLocal = addRow(layout, activity.getString(R.string.system_ftp_title), snap.ftpLocal);
-        keepAlive = addRow(layout, activity.getString(R.string.system_keepalive_title), snap.keepAlive);
+        watchdog = addRow(connGroup, activity.getString(R.string.system_watchdog_title), snap.watchdog);
+
+        LinearLayout appGroup = addGroup(layout, R.string.system_group_app, 0);
+        bootStart = addRow(appGroup, activity.getString(R.string.system_boot_title), snap.bootStart);
+        keepAlive = addRow(appGroup, activity.getString(R.string.system_keepalive_title), snap.keepAlive);
+
+        LinearLayout clockGroup = addGroup(layout, R.string.system_group_clock, 0);
+        clockNtp = addRow(clockGroup, activity.getString(R.string.system_clock_title), snap.clockNtp);
 
         Button save = new Button(activity);
         save.setAllCaps(true);
@@ -456,17 +470,35 @@ final class SystemPanel {
         return format.format(new Date(timeMs));
     }
 
-    private Row addRow(LinearLayout layout, String title, boolean checked) {
-        LinearLayout card = new LinearLayout(activity);
-        card.setOrientation(LinearLayout.VERTICAL);
-        int pad = (int) (10 * density);
-        card.setPadding(pad, pad, pad, pad);
-        card.setBackgroundColor(0xFFE8EEF4);
+    private LinearLayout addGroup(LinearLayout layout, int sectionTitleRes, int introRes) {
+        layout.addView(section(activity.getString(sectionTitleRes)));
+        LinearLayout box = new LinearLayout(activity);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = Math.max(8, Math.round(10 * density));
+        box.setPadding(pad, pad, pad, pad);
+        Drawable bg = UiStyle.recessedStatus(0xFFECEFF1, density);
+        box.setBackground(bg);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = (int) (8 * density);
-        card.setLayoutParams(lp);
+        lp.topMargin = (int) (2 * density);
+        lp.bottomMargin = (int) (10 * density);
+        box.setLayoutParams(lp);
+        if (introRes != 0) {
+            TextView intro = new TextView(activity);
+            intro.setText(introRes);
+            intro.setTextSize(13);
+            intro.setTextColor(0xFF546E7A);
+            intro.setPadding(0, 0, 0, (int) (8 * density));
+            box.addView(intro);
+        }
+        layout.addView(box);
+        return box;
+    }
 
+    private Row addRow(LinearLayout group, String title, boolean checked) {
+        if (countCheckRows(group) > 0) {
+            group.addView(rowDivider());
+        }
         CheckBox check = new CheckBox(activity);
         check.setText(title);
         check.setChecked(checked);
@@ -482,10 +514,28 @@ final class SystemPanel {
         info.setTextColor(0xFF455A64);
         info.setPadding((int) (8 * density), 0, 0, 0);
 
-        card.addView(check);
-        card.addView(info);
-        layout.addView(card);
+        group.addView(check);
+        group.addView(info);
         return new Row(check, info);
+    }
+
+    private int countCheckRows(LinearLayout group) {
+        int n = 0;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            if (group.getChildAt(i) instanceof CheckBox) n++;
+        }
+        return n;
+    }
+
+    private View rowDivider() {
+        View divider = new View(activity);
+        divider.setBackgroundColor(0xFFB0BEC5);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, Math.max(1, Math.round(1 * density)));
+        lp.topMargin = (int) (6 * density);
+        lp.bottomMargin = (int) (6 * density);
+        divider.setLayoutParams(lp);
+        return divider;
     }
 
     private TextView addLogBox(LinearLayout layout) {
@@ -537,6 +587,16 @@ final class SystemPanel {
             });
         }
     };
+
+    private TextView section(String text) {
+        TextView view = new TextView(activity);
+        view.setText(text);
+        view.setTypeface(view.getTypeface(), Typeface.BOLD);
+        view.setPadding(0, (int) (12 * density), 0, (int) (4 * density));
+        view.setTextColor(UiStyle.SLATE);
+        view.setTextSize(14);
+        return view;
+    }
 
     private TextView title(String text) {
         TextView view = new TextView(activity);

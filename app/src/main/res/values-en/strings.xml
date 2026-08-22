@@ -454,6 +454,13 @@
     <string name="system_save">Save</string>
     <string name="system_saved">Settings saved.</string>
     <string name="system_activity_off">Disabled.</string>
+    <string name="system_group_photo_sync">Photo sync</string>
+    <string name="system_group_hd">Hard disk and FTP</string>
+    <string name="system_group_sun_shutdown">GENERAL_SUN_TOO_HIGH shutdown</string>
+    <string name="system_group_sun_intro">Morning check (~30 min after sunrise): sync, telescope and HD off; optionally the Pi too.</string>
+    <string name="system_group_connection">Vespera connection</string>
+    <string name="system_group_app">App startup</string>
+    <string name="system_group_clock">Clock and site</string>
     <string name="system_photo_sync_title">Scheduled photo sync</string>
     <string name="system_photo_sync_info">Night every %1$s h. Daytime (%2$02d:00–%3$02d:00) when Vespera comes online and before power-off. Next: %4$s.</string>
     <string name="system_photo_sync_last">Last sync: %1$s — %2$s</string>
