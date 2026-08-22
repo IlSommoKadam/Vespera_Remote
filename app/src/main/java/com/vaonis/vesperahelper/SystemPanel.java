@@ -35,6 +35,7 @@ final class SystemPanel {
     private final Row storageSync;
     private final Row resumeSync;
     private final Row sunTooHigh;
+    private final Row sunPiShutdown;
     private final Row hdMount;
     private final Row clockNtp;
     private final Row bootStart;
@@ -77,6 +78,8 @@ final class SystemPanel {
         storageSync = addRow(layout, activity.getString(R.string.system_storage_sync_title), snap.storageSync);
         resumeSync = addRow(layout, activity.getString(R.string.system_resume_sync_title), snap.resumeSync);
         sunTooHigh = addRow(layout, activity.getString(R.string.system_sun_title), snap.sunTooHigh);
+        sunPiShutdown = addRow(layout, activity.getString(R.string.system_sun_pi_title),
+                snap.sunPiShutdown);
         hdMount = addRow(layout, activity.getString(R.string.system_hd_mount_title), snap.hdMount);
         clockNtp = addRow(layout, activity.getString(R.string.system_clock_title), snap.clockNtp);
         bootStart = addRow(layout, activity.getString(R.string.system_boot_title), snap.bootStart);
@@ -153,6 +156,7 @@ final class SystemPanel {
         storageSync.check.setChecked(snap.storageSync);
         resumeSync.check.setChecked(snap.resumeSync);
         sunTooHigh.check.setChecked(snap.sunTooHigh);
+        sunPiShutdown.check.setChecked(snap.sunPiShutdown);
         hdMount.check.setChecked(snap.hdMount);
         clockNtp.check.setChecked(snap.clockNtp);
         bootStart.check.setChecked(snap.bootStart);
@@ -170,6 +174,7 @@ final class SystemPanel {
         snap.storageSync = storageSync.check.isChecked();
         snap.resumeSync = resumeSync.check.isChecked();
         snap.sunTooHigh = sunTooHigh.check.isChecked();
+        snap.sunPiShutdown = sunPiShutdown.check.isChecked();
         snap.hdMount = hdMount.check.isChecked();
         snap.clockNtp = clockNtp.check.isChecked();
         snap.bootStart = bootStart.check.isChecked();
@@ -194,6 +199,7 @@ final class SystemPanel {
         storageSync.info.setText(storageSyncInfo(snap.storageSync));
         resumeSync.info.setText(resumeSyncInfo(snap.resumeSync));
         sunTooHigh.info.setText(sunTooHighInfo(snap.sunTooHigh));
+        sunPiShutdown.info.setText(sunPiShutdownInfo(snap.sunPiShutdown, snap.sunTooHigh));
         hdMount.info.setText(hdMountInfo(snap.hdMount));
         clockNtp.info.setText(clockInfo(snap.clockNtp));
         bootStart.info.setText(prefixed(snap.bootStart,
@@ -238,6 +244,9 @@ final class SystemPanel {
         }
         if (SystemActivityLog.KIND_SUN_TOO_HIGH.equals(kind)) {
             return activity.getString(R.string.system_sun_title);
+        }
+        if (SystemActivityLog.KIND_PI_SHUTDOWN.equals(kind)) {
+            return activity.getString(R.string.system_sun_pi_title);
         }
         if (SystemActivityLog.KIND_HD_MOUNT.equals(kind)) {
             return activity.getString(R.string.system_hd_mount_title);
@@ -347,6 +356,14 @@ final class SystemPanel {
                     sunTooHighResultLabel(settings.sunTooHighResult()));
         }
         return prefixed(enabled, body + "\n" + next + "\n" + last);
+    }
+
+    private String sunPiShutdownInfo(boolean enabled, boolean sunEnabled) {
+        String body = activity.getString(R.string.system_sun_pi_info);
+        if (!sunEnabled) {
+            body += "\n" + activity.getString(R.string.system_sun_pi_requires_sun);
+        }
+        return prefixed(enabled, body);
     }
 
     private String sunTooHighResultLabel(String code) {

@@ -652,6 +652,17 @@ umount_all_of() {
 }
 
 # Flush and unmount HD without clearing HD_STATE (so next boot can remount).
+shutdown_pi() {
+  sync
+  write_mount_ack "shutdown-pi-ok"
+  (
+    sleep 2
+    setprop sys.powerctl shutdown 2>/dev/null \
+      || svc power shutdown 2>/dev/null \
+      || reboot -p
+  ) &
+}
+
 shutdown_umount_hd() {
   bind=$(photos_dir)
   state_mnt=""
@@ -882,6 +893,7 @@ handle_cmd() {
     disk-status) disk_status ;;
     auto-mount) auto_mount_from_state ;;
     shutdown-umount) shutdown_umount_hd ;;
+    shutdown-pi) shutdown_pi ;;
     set-clock) set_clock "$a" "$b" "$c" ;;
     *) write_ack "unknown:$line" ;;
   esac

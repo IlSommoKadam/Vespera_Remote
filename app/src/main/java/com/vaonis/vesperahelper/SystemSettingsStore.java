@@ -18,6 +18,7 @@ final class SystemSettingsStore {
     private static final String KEY_FTP_LOCAL = "ftp_local";
     private static final String KEY_KEEP_ALIVE = "keep_alive";
     private static final String KEY_SUN_TOO_HIGH = "sun_too_high";
+    private static final String KEY_SUN_PI_SHUTDOWN = "sun_pi_shutdown";
     private static final String KEY_SUN_TOO_HIGH_DAY = "sun_too_high_day";
     private static final String KEY_SUN_TOO_HIGH_AT = "sun_too_high_at";
     private static final String KEY_SUN_TOO_HIGH_RESULT = "sun_too_high_result";
@@ -40,6 +41,7 @@ final class SystemSettingsStore {
         boolean ftpLocal;
         boolean keepAlive;
         boolean sunTooHigh;
+        boolean sunPiShutdown;
     }
 
     private final SharedPreferences prefs;
@@ -67,6 +69,7 @@ final class SystemSettingsStore {
         snap.ftpLocal = ftpLocal();
         snap.keepAlive = keepAlive();
         snap.sunTooHigh = sunTooHigh();
+        snap.sunPiShutdown = sunPiShutdown();
         return snap;
     }
 
@@ -85,6 +88,7 @@ final class SystemSettingsStore {
                 .putBoolean(KEY_FTP_LOCAL, snap.ftpLocal)
                 .putBoolean(KEY_KEEP_ALIVE, snap.keepAlive)
                 .putBoolean(KEY_SUN_TOO_HIGH, snap.sunTooHigh)
+                .putBoolean(KEY_SUN_PI_SHUTDOWN, snap.sunPiShutdown)
                 .commit();
     }
 
@@ -100,6 +104,7 @@ final class SystemSettingsStore {
     boolean ftpLocal() { return prefs.getBoolean(KEY_FTP_LOCAL, true); }
     boolean keepAlive() { return prefs.getBoolean(KEY_KEEP_ALIVE, true); }
     boolean sunTooHigh() { return prefs.getBoolean(KEY_SUN_TOO_HIGH, true); }
+    boolean sunPiShutdown() { return prefs.getBoolean(KEY_SUN_PI_SHUTDOWN, false); }
 
     int sunTooHighDay() { return prefs.getInt(KEY_SUN_TOO_HIGH_DAY, -1); }
     long sunTooHighAt() { return prefs.getLong(KEY_SUN_TOO_HIGH_AT, 0); }

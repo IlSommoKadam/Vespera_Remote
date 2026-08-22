@@ -94,6 +94,7 @@ public final class PhotoSyncService extends Service {
     private static final long AUTO_RETRY_MS = 5 * 60_000L;
     private static final long MIN_AUTO_DELAY_MS = 5_000L;
     private static final long SUN_TOO_HIGH_RETRY_MS = 10 * 60_000L;
+    private static final long PI_SHUTDOWN_DELAY_MS = 3_000L;
     private static final int[] STORAGE_CHECK_MINUTES = {10, 11};
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -1195,6 +1196,27 @@ public final class PhotoSyncService extends Service {
                 : R.string.system_sun_result_shutdown_fail);
         message = shutdownMsg + "\n" + localized.getString(R.string.photo_hd_powered_off_shutdown);
         publish();
+        if (dayKey >= 0 && SystemSettingsStore.from(this).sunPiShutdown()) {
+            schedulePiShutdownAfterSunTooHigh();
+        }
+    }
+
+    /** After sun-too-high HD eject, optionally power off the Pi via vespera-netd. */
+    private void schedulePiShutdownAfterSunTooHigh() {
+        Log.i(TAG, "sun-too-high — Pi shutdown scheduled in "
+                + (PI_SHUTDOWN_DELAY_MS / 1000L) + "s");
+        mainHandler.postDelayed(() -> {
+            boolean sent = DaemonDisk.shutdownPi(this);
+            if (sent) {
+                Log.i(TAG, "Pi shutdown requested");
+                SystemActivityLog.record(this, SystemActivityLog.KIND_PI_SHUTDOWN,
+                        SystemActivityLog.DETAIL_OK);
+            } else {
+                Log.w(TAG, "Pi shutdown failed");
+                SystemActivityLog.record(this, SystemActivityLog.KIND_PI_SHUTDOWN,
+                        SystemActivityLog.DETAIL_FAIL);
+            }
+        }, PI_SHUTDOWN_DELAY_MS);
     }
 
     private long delayUntilNextStorageSlot() {

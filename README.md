@@ -54,6 +54,7 @@ L'app mantiene una richiesta Wi-Fi generica e chiede al daemon root `tools/vespe
 | 0.6.82 | 129 | Tab Foto: **Smonta HD** nascosto (basta **Spegni HD**) |
 | 0.6.83 | 130 | Meno sync foto: ignora i tick Wi‑Fi CONNECTED e rispetta l’intervallo notturno |
 | 0.6.84 | 131 | Dopo il sync FTP ricalcola lo spazio occupato e lo aggiorna nello stato Telescopio |
+| 0.6.85 | 132 | Opzione in Sistema: a GENERAL_SUN_TOO_HIGH spegne il Pi dopo l’HD (daemon `shutdown-pi`) |
 
 Il daemon deve essere avviato come root sul Pi dopo il boot; l'app comunica con esso tramite `net.req` / `disk.req` nella propria directory esterna.
 

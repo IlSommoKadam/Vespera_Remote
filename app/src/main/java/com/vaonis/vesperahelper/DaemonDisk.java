@@ -194,6 +194,13 @@ public final class DaemonDisk {
         return parseMount(ack);
     }
 
+    /** Ask vespera-netd to power off the Pi (after HD eject). */
+    public static boolean shutdownPi(Context context) {
+        String ack = request(context, "shutdown-pi", MOUNT_ACK, 8_000);
+        if (ack == null) return false;
+        return firstLine(ack).startsWith("shutdown-pi-ok");
+    }
+
     public static MountStatus parseMount(String ack) {
         if (ack == null) return MountStatus.timeout();
         String line = firstLine(ack);

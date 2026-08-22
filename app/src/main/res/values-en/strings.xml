@@ -504,5 +504,8 @@
     <string name="system_sun_result_triggered">GENERAL_SUN_TOO_HIGH seen, sync/power-off in progress</string>
     <string name="system_sun_result_shutdown_ok">last sync done, telescope powered off</string>
     <string name="system_sun_result_shutdown_fail">sync attempted, power-off failed</string>
+    <string name="system_sun_pi_title">Power off Pi on GENERAL_SUN_TOO_HIGH</string>
+    <string name="system_sun_pi_info">After sync, telescope shutdown and HD off, also powers off the Raspberry Pi (root daemon).</string>
+    <string name="system_sun_pi_requires_sun">Requires «Power off on GENERAL_SUN_TOO_HIGH» enabled.</string>
 
 </resources>

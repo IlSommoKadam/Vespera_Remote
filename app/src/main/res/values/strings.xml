@@ -504,5 +504,8 @@
     <string name="system_sun_result_triggered">GENERAL_SUN_TOO_HIGH rilevato, sync/spegnimento in corso</string>
     <string name="system_sun_result_shutdown_ok">ultima sync e telescopio spento</string>
     <string name="system_sun_result_shutdown_fail">sync tentata, spegnimento non riuscito</string>
+    <string name="system_sun_pi_title">Spegni Pi a GENERAL_SUN_TOO_HIGH</string>
+    <string name="system_sun_pi_info">Dopo sync, spegnimento telescopio e HD spento, spegne anche il Raspberry Pi (daemon root).</string>
+    <string name="system_sun_pi_requires_sun">Richiede «Spegnimento a GENERAL_SUN_TOO_HIGH» attivo.</string>
 
 </resources>
