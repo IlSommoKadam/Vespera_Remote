@@ -445,7 +445,7 @@
 
     <string name="system_tab_title">Attività automatiche</string>
     <string name="system_tab_intro">Ogni voce è un processo che l’app esegue da sola. Abilita o disabilita i check e premi Salva per applicarli tutti.</string>
-    <string name="system_log_title">Ultime 10 attività automatiche</string>
+    <string name="system_log_title">Ultime 20 attività automatiche</string>
     <string name="system_log_empty">Nessuna attività automatica registrata ancora.</string>
     <string name="system_log_line">%1$s  %2$s — %3$s</string>
     <string name="system_log_ok">ok</string>

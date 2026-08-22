@@ -12,7 +12,7 @@ import java.util.List;
 /** Ring buffer of the last automatic activities, newest first. */
 final class SystemActivityLog {
     static final String ACTION = "com.vaonis.vesperahelper.SYSTEM_ACTIVITY_LOG";
-    static final int MAX = 10;
+    static final int MAX = 20;
 
     static final String KIND_PHOTO_SYNC = "photo_sync";
     static final String KIND_STORAGE_SYNC = "storage_sync";

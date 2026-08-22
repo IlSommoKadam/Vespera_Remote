@@ -32,6 +32,12 @@ final class SystemSettingsStore {
     static final String SUN_RESULT_SHUTDOWN_OK = "shutdown_ok";
     static final String SUN_RESULT_SHUTDOWN_FAIL = "shutdown_fail";
 
+    /** Incomplete today's attempt: retry instead of waiting until tomorrow. */
+    static boolean sunTooHighNeedsRetry(String result) {
+        return SUN_RESULT_SHUTDOWN_FAIL.equals(result)
+                || SUN_RESULT_TRIGGERED.equals(result);
+    }
+
     static final class Snapshot {
         boolean photoSync;
         boolean storageSync;

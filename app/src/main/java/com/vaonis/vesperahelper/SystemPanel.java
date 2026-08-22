@@ -372,7 +372,8 @@ final class SystemPanel {
             return prefixed(enabled, body + "\n" + activity.getString(R.string.system_sun_unset));
         }
         long now = System.currentTimeMillis();
-        long nextAt = syncStore.nextSunTooHighCheckAt(settings.sunTooHighDay(), now);
+        boolean retryToday = SystemSettingsStore.sunTooHighNeedsRetry(settings.sunTooHighResult());
+        long nextAt = syncStore.nextSunTooHighCheckAt(settings.sunTooHighDay(), retryToday, now);
         String next;
         if (nextAt <= 0) {
             next = activity.getString(R.string.system_sun_unset);
@@ -404,8 +405,10 @@ final class SystemPanel {
         if (SystemSettingsStore.SUN_RESULT_SHUTDOWN_OK.equals(code)) {
             return activity.getString(R.string.system_sun_result_shutdown_ok);
         }
-        if (SystemSettingsStore.SUN_RESULT_SHUTDOWN_FAIL.equals(code)) {
-            return activity.getString(R.string.system_sun_result_shutdown_fail);
+        if (code != null && code.startsWith(SystemSettingsStore.SUN_RESULT_SHUTDOWN_FAIL)) {
+            String label = activity.getString(R.string.system_sun_result_shutdown_fail);
+            String extra = code.substring(SystemSettingsStore.SUN_RESULT_SHUTDOWN_FAIL.length()).trim();
+            return extra.isEmpty() ? label : label + " — " + extra;
         }
         if (SystemSettingsStore.SUN_RESULT_TRIGGERED.equals(code)) {
             return activity.getString(R.string.system_sun_result_triggered);

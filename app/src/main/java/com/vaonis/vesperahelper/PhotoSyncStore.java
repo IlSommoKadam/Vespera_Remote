@@ -199,12 +199,17 @@ final class PhotoSyncStore {
 
     /**
      * Next check time: today's sunrise+30 if that day was not already checked,
-     * otherwise tomorrow's sunrise+30. Returns -1 without a site.
+     * otherwise tomorrow's sunrise+30. {@code retryToday} keeps today's window
+     * open after a failed or interrupted attempt. Returns -1 without a site.
      */
     long nextSunTooHighCheckAt(int lastCheckedDay, long nowMs) {
+        return nextSunTooHighCheckAt(lastCheckedDay, false, nowMs);
+    }
+
+    long nextSunTooHighCheckAt(int lastCheckedDay, boolean retryToday, long nowMs) {
         if (!hasSite()) return -1;
         int today = dayKey(nowMs);
-        if (lastCheckedDay == today) {
+        if (lastCheckedDay == today && !retryToday) {
             Calendar calendar = Calendar.getInstance(zone());
             calendar.setTimeInMillis(nowMs);
             calendar.add(Calendar.DAY_OF_YEAR, 1);

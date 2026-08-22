@@ -445,7 +445,7 @@
 
     <string name="system_tab_title">Automatic activities</string>
     <string name="system_tab_intro">Each item is a process the app runs on its own. Tick or untick the checks, then tap Save to apply them all.</string>
-    <string name="system_log_title">Last 10 automatic activities</string>
+    <string name="system_log_title">Last 20 automatic activities</string>
     <string name="system_log_empty">No automatic activity recorded yet.</string>
     <string name="system_log_line">%1$s  %2$s — %3$s</string>
     <string name="system_log_ok">ok</string>

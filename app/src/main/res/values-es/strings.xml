@@ -445,7 +445,7 @@
 
     <string name="system_tab_title">Actividades automáticas</string>
     <string name="system_tab_intro">Cada elemento es un proceso que la app ejecuta sola. Activa o desactiva las casillas y pulsa Guardar para aplicarlas todas.</string>
-    <string name="system_log_title">Últimas 10 actividades automáticas</string>
+    <string name="system_log_title">Últimas 20 actividades automáticas</string>
     <string name="system_log_empty">Aún no hay actividades automáticas registradas.</string>
     <string name="system_log_line">%1$s  %2$s — %3$s</string>
     <string name="system_log_ok">ok</string>
